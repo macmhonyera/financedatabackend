@@ -1,0 +1,67 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Node / Nest build
+node_modules
+dist
+dist-ssr
+*.local
+
+# Env files
+.env
+.env.*.local
+
+# Python cache / compiled
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# Python virtual environments
+venv/
+.venv/
+env/
+ENV/
+python-env/
+ml_service/.venv/
+pip-wheel-metadata/
+
+# Python build / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-log.txt
+
+# Jupyter / notebooks
+.ipynb_checkpoints/
+
+# Python test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Optional: Python dotenv (if your microservice uses it separately)
+*.env

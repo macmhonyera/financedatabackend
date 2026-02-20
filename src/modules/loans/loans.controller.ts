@@ -1,0 +1,105 @@
+import { Controller, Get, Post, Body, Param, Put, UseGuards, Req } from '@nestjs/common';
+import { LoansService } from './loans.service';
+import { AuthGuard } from '@nestjs/passport';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiBody } from '@nestjs/swagger';
+import { Roles } from '../../common/roles.decorator';
+import { RolesGuard } from '../../common/roles.guard';
+import { CreateLoanDto } from './dto/create-loan.dto';
+
+@ApiTags('loans')
+@ApiBearerAuth()
+@UseGuards(AuthGuard('jwt'))
+@Controller('loans')
+export class LoansController {
+  constructor(private svc: LoansService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'List all loans (scoped to user branch)' })
+  @ApiResponse({ status: 200, description: 'List of loans' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  list(@Req() req: any) {
+    return this.svc.findAllScoped(req.user);
+  }
+
+  @Get('portfolio/summary')
+  @ApiOperation({ summary: 'Portfolio summary and PAR buckets' })
+  @ApiResponse({ status: 200, description: 'Portfolio metrics' })
+  portfolioSummary(@Req() req: any) {
+    return this.svc.portfolioSummary(req.user);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Get loan by ID' })
+  @ApiResponse({ status: 200, description: 'Loan found' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  get(@Req() req: any, @Param('id') id: string) {
+    return this.svc.findByIdScoped(id, req.user);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('admin', 'manager')
+  @Post()
+  @ApiOperation({ summary: 'Create loan (admin/manager)' })
+  @ApiBody({ type: CreateLoanDto })
+  @ApiResponse({ status: 201, description: 'Loan created' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  create(@Req() req: any, @Body() body: CreateLoanDto) {
+    return this.svc.create(
+      {
+        amount: body.amount,
+        balance: body.amount,
+        client: { id: body.clientId } as any,
+        productId: body.productId,
+        termMonths: body.termMonths,
+        interestRateAnnual: body.interestRateAnnual,
+        repaymentFrequency: body.repaymentFrequency,
+        currency: body.currency,
+        disbursedAt: body.disbursedAt,
+      } as any,
+      req.user,
+    );
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('admin', 'manager')
+  @Put(':id')
+  @ApiOperation({ summary: 'Update loan (admin/manager)' })
+  @ApiBody({ type: CreateLoanDto })
+  @ApiResponse({ status: 200, description: 'Loan updated' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  update(@Req() req: any, @Param('id') id: string, @Body() body: Partial<CreateLoanDto>) {
+    return this.svc.updateScoped(id, body as any, req.user);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('admin')
+  @Post(':id/approve')
+  @ApiOperation({ summary: 'Approve loan (admin only)' })
+  @ApiResponse({ status: 200, description: 'Loan approved' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  approve(@Req() req: any, @Param('id') id: string) {
+    return this.svc.setStatusScoped(id, 'active', req.user);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('admin')
+  @Post(':id/reject')
+  @ApiOperation({ summary: 'Reject loan (admin only)' })
+  @ApiResponse({ status: 200, description: 'Loan rejected' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  reject(@Req() req: any, @Param('id') id: string) {
+    return this.svc.setStatusScoped(id, 'rejected', req.user);
+  }
+
+  @Get(':id/schedule')
+  @ApiOperation({ summary: 'Get repayment schedule for loan' })
+  @ApiResponse({ status: 200, description: 'Loan schedule' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  getSchedule(@Req() req: any, @Param('id') id: string) {
+    return this.svc.listScheduleScoped(id, req.user);
+  }
+}
