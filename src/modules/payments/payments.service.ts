@@ -77,7 +77,8 @@ export class PaymentsService {
         externalReference: (data as any).externalReference,
         channel: (data as any).channel,
         metadata: (data as any).metadata,
-        reconciliationStatus: 'pending',
+        reconciliationStatus: 'reconciled',
+        reconciledAt: new Date(),
       } as any);
       const saved = await paymentRepo.save(payment as any);
 

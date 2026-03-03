@@ -6,6 +6,7 @@ import { AppModule } from '../../src/app.module';
 import { User } from '../../src/entities/user.entity';
 import { Branch } from '../../src/entities/branch.entity';
 import { Client } from '../../src/entities/client.entity';
+import { ClientAsset } from '../../src/entities/client-asset.entity';
 import { Loan } from '../../src/entities/loan.entity';
 import { Payment } from '../../src/entities/payment.entity';
 import { LoanProduct } from '../../src/entities/loan-product.entity';
@@ -31,6 +32,7 @@ describe('E2E App', () => {
             User,
             Branch,
             Client,
+            ClientAsset,
             Loan,
             Payment,
             LoanProduct,

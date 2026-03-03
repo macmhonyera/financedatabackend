@@ -7,7 +7,7 @@ Production-oriented microfinance backend scaffold with:
 - Configurable loan products
 - Auto-generated repayment schedules (flat/reducing)
 - Payment posting with balance updates and installment allocation
-- Credit scoring integration (external ML service)
+- Deterministic, explainable credit scoring engine with score history
 - Compliance domain (KYC, complaints, AML events, audit logs, regulatory metrics)
 - Notification platform (in-app, email, SMS) with templates/retries
 - Twilio SMS adapter + mail provider abstraction
@@ -40,10 +40,12 @@ Swagger docs: `http://localhost:3031/api/docs`
 
 - `auth`: login
 - `clients`: client CRUD with branch scope
+- `client-assets`: client asset registry with market valuations (for collateral loans)
 - `loan-products`: configure product rules (amount bounds, term, frequency, rates, schedule type)
 - `loans`: create/approve/reject loans + schedule + portfolio summary
 - `payments`: post payments, idempotency support, reconciliation status
 - `credit`: score/history/model-health
+- `credit-score`: deterministic client credit score compute/latest/history
 - `compliance`: KYC, complaints, AML events, audit, regulatory metrics
 - `notifications`: templates, enqueue, process queue, my in-app notifications
 
@@ -52,3 +54,15 @@ Swagger docs: `http://localhost:3031/api/docs`
 - `synchronize` is enabled outside production for rapid iteration.
 - For production, use migrations and secure provider credentials.
 - Twilio delivery requires `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_NUMBER`.
+
+## Migrations
+
+Create and run migrations:
+
+```bash
+npm run migration:run
+```
+
+Added migration:
+
+- `src/migrations/1762000000000-AddCreditScoreResultsAndClientProfileColumns.ts`

@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Loan } from '../../entities/loan.entity';
 import { Client } from '../../entities/client.entity';
+import { ClientAsset } from '../../entities/client-asset.entity';
 import { CreditService } from '../credit/credit.service';
 import { LoanProduct, RepaymentFrequency, ScheduleType } from '../../entities/loan-product.entity';
 import { LoanInstallment } from '../../entities/loan-installment.entity';
@@ -21,6 +22,9 @@ type LoanCreateInput = Partial<Loan> & {
   repaymentFrequency?: RepaymentFrequency;
   currency?: string;
   disbursedAt?: string | Date;
+  isCollateralized?: boolean;
+  collateralAssetIds?: string[];
+  collateralNotes?: string;
 };
 
 @Injectable()
@@ -30,6 +34,7 @@ export class LoansService {
   constructor(
     @InjectRepository(Loan) private repo: Repository<Loan>,
     @InjectRepository(Client) private clientRepo: Repository<Client>,
+    @InjectRepository(ClientAsset) private clientAssetRepo: Repository<ClientAsset>,
     @InjectRepository(LoanProduct) private productRepo: Repository<LoanProduct>,
     @InjectRepository(LoanInstallment) private installmentRepo: Repository<LoanInstallment>,
     private credit: CreditService,
@@ -212,6 +217,49 @@ export class LoansService {
       throw new BadRequestException('disbursedAt must be a valid date');
     }
 
+    const collateralAssetIds = Array.isArray(data.collateralAssetIds)
+      ? Array.from(new Set(data.collateralAssetIds.filter((id) => typeof id === 'string' && id.trim().length > 0)))
+      : [];
+    const isCollateralized = Boolean(data.isCollateralized || collateralAssetIds.length > 0);
+
+    let collateralTotalMarketValue: number | undefined;
+    let collateralSnapshot: Record<string, any> | undefined;
+
+    if (isCollateralized) {
+      if (collateralAssetIds.length === 0) {
+        throw new BadRequestException('collateralAssetIds are required for collateralized loans');
+      }
+
+      const assets = await this.clientAssetRepo
+        .createQueryBuilder('asset')
+        .where('asset.clientId = :clientId', { clientId })
+        .andWhere('asset.status = :status', { status: 'active' })
+        .andWhere('asset.id IN (:...assetIds)', { assetIds: collateralAssetIds })
+        .getMany();
+
+      if (assets.length !== collateralAssetIds.length) {
+        throw new BadRequestException('One or more collateral assets are invalid or inactive');
+      }
+
+      collateralTotalMarketValue = this.round2(
+        assets.reduce((sum, asset) => sum + Number(asset.marketValue || 0), 0),
+      );
+      const coverageRatio = amount > 0 ? this.round2(collateralTotalMarketValue / amount) : 0;
+
+      collateralSnapshot = {
+        notes: data.collateralNotes || undefined,
+        totalMarketValue: collateralTotalMarketValue,
+        coverageRatio,
+        assets: assets.map((asset) => ({
+          assetId: asset.id,
+          assetType: asset.assetType,
+          description: asset.description || null,
+          marketValue: Number(asset.marketValue || 0),
+          valuationDate: asset.valuationDate,
+        })),
+      };
+    }
+
     const createdLoan = await this.repo.manager.transaction(async (manager) => {
       const loanRepo = manager.getRepository(Loan);
       const installmentRepo = manager.getRepository(LoanInstallment);
@@ -227,6 +275,9 @@ export class LoansService {
         termMonths,
         repaymentFrequency,
         disbursedAt,
+        isCollateralized,
+        collateralTotalMarketValue,
+        collateralSnapshot,
       } as Loan);
 
       const saved = await loanRepo.save(entity as Loan);
@@ -264,11 +315,9 @@ export class LoansService {
         age_days: 0,
         client_tenure_days: 0,
       };
-      this.credit.scoreApplication(features, scoredClientId, createdLoan?.id).catch((err) => {
-        this.logger.warn('Credit scoring failed for loan ' + createdLoan?.id + ': ' + (err?.message || err));
-      });
+      await this.credit.scoreApplication(features, scoredClientId, createdLoan?.id, user);
     } catch (err) {
-      this.logger.warn('Failed to enqueue credit scoring: ' + (err?.message || err));
+      this.logger.warn('Failed to perform credit scoring: ' + (err?.message || err));
     }
 
     return createdLoan;

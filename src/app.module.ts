@@ -11,6 +11,7 @@ import { RolesGuard } from './common/roles.guard';
 import { User } from './entities/user.entity';
 import { Branch } from './entities/branch.entity';
 import { Client } from './entities/client.entity';
+import { ClientAsset } from './entities/client-asset.entity';
 import { Loan } from './entities/loan.entity';
 import { Payment } from './entities/payment.entity';
 import { CreditScore } from './modules/credit/credit.entity';
@@ -26,6 +27,7 @@ import { ComplianceModule } from './modules/compliance/compliance.module';
 import { NotificationTemplate } from './entities/notification-template.entity';
 import { Notification } from './entities/notification.entity';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { ClientAssetsModule } from './modules/client-assets/client-assets.module';
 
 @Module({
   imports: [
@@ -41,6 +43,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
         User,
         Branch,
         Client,
+        ClientAsset,
         Loan,
         Payment,
         CreditScore,
@@ -59,6 +62,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     AuthModule,
     UsersModule,
     ClientsModule,
+    ClientAssetsModule,
     LoansModule,
     PaymentsModule,
     SeedModule,

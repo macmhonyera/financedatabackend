@@ -37,9 +37,9 @@ export class LoansController {
   }
 
   @UseGuards(RolesGuard)
-  @Roles('admin', 'manager')
+  @Roles('admin', 'manager', 'loan_officer')
   @Post()
-  @ApiOperation({ summary: 'Create loan (admin/manager)' })
+  @ApiOperation({ summary: 'Create loan (admin/manager/loan_officer)' })
   @ApiBody({ type: CreateLoanDto })
   @ApiResponse({ status: 201, description: 'Loan created' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
@@ -56,6 +56,9 @@ export class LoansController {
         repaymentFrequency: body.repaymentFrequency,
         currency: body.currency,
         disbursedAt: body.disbursedAt,
+        isCollateralized: body.isCollateralized,
+        collateralAssetIds: body.collateralAssetIds,
+        collateralNotes: body.collateralNotes,
       } as any,
       req.user,
     );

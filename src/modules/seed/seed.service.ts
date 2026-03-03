@@ -4,6 +4,7 @@ import * as bcrypt from 'bcrypt';
 import { Branch } from '../../entities/branch.entity';
 import { User } from '../../entities/user.entity';
 import { Client } from '../../entities/client.entity';
+import { ClientAsset } from '../../entities/client-asset.entity';
 import { Loan } from '../../entities/loan.entity';
 import { Payment } from '../../entities/payment.entity';
 import { LoanProduct } from '../../entities/loan-product.entity';
@@ -14,6 +15,7 @@ import { AmlEvent } from '../../entities/aml-event.entity';
 import { AuditLog } from '../../entities/audit-log.entity';
 import { NotificationTemplate } from '../../entities/notification-template.entity';
 import { Notification } from '../../entities/notification.entity';
+import { CreditScoreResult } from '../credit-score/scoring.entity';
 
 @Injectable()
 export class SeedService {
@@ -23,6 +25,7 @@ export class SeedService {
     const repoBranch = this.dataSource.getRepository(Branch);
     const repoUser = this.dataSource.getRepository(User);
     const repoClient = this.dataSource.getRepository(Client);
+    const repoClientAsset = this.dataSource.getRepository(ClientAsset);
     const repoLoan = this.dataSource.getRepository(Loan);
     const repoPayment = this.dataSource.getRepository(Payment);
     const repoLoanProduct = this.dataSource.getRepository(LoanProduct);
@@ -33,27 +36,42 @@ export class SeedService {
     const repoAudit = this.dataSource.getRepository(AuditLog);
     const repoNotificationTemplate = this.dataSource.getRepository(NotificationTemplate);
     const repoNotification = this.dataSource.getRepository(Notification);
+    const repoCreditScore = this.dataSource.getRepository(CreditScoreResult);
 
     // Clear database (supports both Postgres and sqlite tests)
     const dbType = (this.dataSource.options as any)?.type;
     if (dbType === 'postgres') {
-      await this.dataSource.query(`
-        TRUNCATE TABLE
-          notification,
-          notification_template,
-          audit_log,
-          aml_event,
-          complaint,
-          kyc_profile,
-          payment,
-          loan_installment,
-          loan,
-          loan_product,
-          client,
-          "user",
-          branch
-        RESTART IDENTITY CASCADE;
+      const candidates = [
+        'notification',
+        'notification_template',
+        'audit_log',
+        'aml_event',
+        'complaint',
+        'kyc_profile',
+        'payment',
+        'credit_score_results',
+        'client_asset',
+        'loan_installment',
+        'loan',
+        'loan_product',
+        'client',
+        'user',
+        'branch',
+      ];
+
+      const existing: Array<{ tablename: string }> = await this.dataSource.query(`
+        SELECT tablename
+        FROM pg_tables
+        WHERE schemaname = 'public'
       `);
+
+      const existingNames = new Set(existing.map((row) => row.tablename));
+      const toTruncate = candidates.filter((name) => existingNames.has(name));
+
+      if (toTruncate.length > 0) {
+        const quoted = toTruncate.map((name) => `"${name}"`).join(', ');
+        await this.dataSource.query(`TRUNCATE TABLE ${quoted} RESTART IDENTITY CASCADE;`);
+      }
     } else {
       await repoNotification.clear();
       await repoNotificationTemplate.clear();
@@ -61,6 +79,8 @@ export class SeedService {
       await repoAml.clear();
       await repoComplaint.clear();
       await repoKyc.clear();
+      await repoCreditScore.clear();
+      await repoClientAsset.clear();
       await repoPayment.clear();
       await repoLoanInstallment.clear();
       await repoLoan.clear();

@@ -4,6 +4,7 @@ config();
 import { User } from './entities/user.entity';
 import { Branch } from './entities/branch.entity';
 import { Client } from './entities/client.entity';
+import { ClientAsset } from './entities/client-asset.entity';
 import { Loan } from './entities/loan.entity';
 import { Payment } from './entities/payment.entity';
 import { CreditScore } from './modules/credit/credit.entity';
@@ -27,6 +28,7 @@ export const AppDataSource = new DataSource({
     User,
     Branch,
     Client,
+    ClientAsset,
     Loan,
     Payment,
     CreditScore,
@@ -39,7 +41,7 @@ export const AppDataSource = new DataSource({
     NotificationTemplate,
     Notification,
   ],
-  migrations: ['dist/migrations/*{.ts,.js}'],
+  migrations: [`${__dirname}/migrations/*{.ts,.js}`],
 });
 
 export default AppDataSource;

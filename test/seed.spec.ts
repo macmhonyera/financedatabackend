@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import { Branch } from '../src/entities/branch.entity';
 import { User } from '../src/entities/user.entity';
 import { Client } from '../src/entities/client.entity';
+import { ClientAsset } from '../src/entities/client-asset.entity';
 import { Loan } from '../src/entities/loan.entity';
 import { Payment } from '../src/entities/payment.entity';
 import { LoanProduct } from '../src/entities/loan-product.entity';
@@ -13,6 +14,7 @@ import { AmlEvent } from '../src/entities/aml-event.entity';
 import { AuditLog } from '../src/entities/audit-log.entity';
 import { NotificationTemplate } from '../src/entities/notification-template.entity';
 import { Notification } from '../src/entities/notification.entity';
+import { CreditScoreResult } from '../src/modules/credit-score/scoring.entity';
 import { SeedService } from '../src/modules/seed/seed.service';
 
 describe('SeedService', () => {
@@ -27,6 +29,7 @@ describe('SeedService', () => {
         User,
         Branch,
         Client,
+        ClientAsset,
         Loan,
         Payment,
         LoanProduct,
@@ -37,6 +40,7 @@ describe('SeedService', () => {
         AuditLog,
         NotificationTemplate,
         Notification,
+        CreditScoreResult,
       ],
       synchronize: true,
     });

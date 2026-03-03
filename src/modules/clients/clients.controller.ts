@@ -30,14 +30,29 @@ export class ClientsController {
   }
 
   @UseGuards(RolesGuard)
-  @Roles('admin', 'manager')
+  @Roles('admin', 'manager', 'loan_officer')
   @Post()
-  @ApiOperation({ summary: 'Create a client (admin/manager)' })
+  @ApiOperation({ summary: 'Create a client (admin/manager/loan_officer)' })
   @ApiResponse({ status: 201, description: 'Client created' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
   create(@Req() req: any, @Body() body: CreateClientDto) {
-    const payload: any = { name: body.name, phone: body.phone };
+    const payload: any = {
+      name: body.name,
+      phone: body.phone,
+      email: body.email,
+      idNumber: body.idNumber,
+      avatar: body.avatar,
+      creditScore: body.creditScore,
+      status: body.status,
+      collectionStatus: body.collectionStatus,
+      loanOfficer: body.loanOfficer || req.user?.name,
+      businessType: body.businessType,
+      registrationNumber: body.registrationNumber,
+      monthlyIncome: body.monthlyIncome,
+      employmentType: body.employmentType,
+    };
+
     if (req.user?.role === 'admin' && body.branchId) {
       payload.branch = { id: body.branchId };
     } else if (req.user?.branch) {
@@ -47,9 +62,9 @@ export class ClientsController {
   }
 
   @UseGuards(RolesGuard)
-  @Roles('admin', 'manager')
+  @Roles('admin', 'manager', 'loan_officer')
   @Put(':id')
-  @ApiOperation({ summary: 'Update a client (admin/manager)' })
+  @ApiOperation({ summary: 'Update a client (admin/manager/loan_officer)' })
   @ApiResponse({ status: 200, description: 'Client updated' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })

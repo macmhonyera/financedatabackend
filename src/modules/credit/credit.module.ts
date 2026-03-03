@@ -1,11 +1,10 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { CreditService } from './credit.service';
 import { CreditController } from './credit.controller';
-import { CreditScore } from './credit.entity';
+import { CreditService } from './credit.service';
+import { CreditScoreModule } from '../credit-score/credit-score.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([CreditScore])],
+  imports: [CreditScoreModule],
   providers: [CreditService],
   controllers: [CreditController],
   exports: [CreditService],

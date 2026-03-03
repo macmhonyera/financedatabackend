@@ -50,6 +50,15 @@ export class Loan {
   @Column({ nullable: true })
   dueAt?: Date;
 
+  @Column({ type: 'boolean', default: false })
+  isCollateralized: boolean;
+
+  @Column('decimal', { precision: 14, scale: 2, nullable: true })
+  collateralTotalMarketValue?: number;
+
+  @Column('json', { nullable: true })
+  collateralSnapshot?: Record<string, any>;
+
   @OneToMany(() => Payment, (p) => p.loan)
   payments: Payment[];
 

@@ -1,9 +1,12 @@
-import { IsNumber, IsString, IsOptional, IsObject } from 'class-validator';
+import { IsNumber, IsString, IsOptional, IsObject, Min } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 
 export class CreatePaymentDto {
   @ApiProperty()
+  @Type(() => Number)
   @IsNumber()
+  @Min(0.01)
   amount: number;
 
   @ApiProperty()
