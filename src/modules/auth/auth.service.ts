@@ -23,10 +23,8 @@ export class AuthService {
   async login(email: string, password: string) {
     if (!password) throw new UnauthorizedException('Invalid credentials');
     const user = await this.users.findByEmail(email);
-    console.log('Login attempt for', email, 'found user:', !!user);
     if (!user || !user.passwordHash) throw new UnauthorizedException('Invalid credentials');
     const ok = await bcrypt.compare(password, user.passwordHash);
-    console.log('Login attempt for', email, 'success:', ok);
     if (!ok) throw new UnauthorizedException('Invalid credentials');
     const payload = { sub: user.id, email: user.email, role: user.role, branch: user.branch?.id };
     const token = this.jwt.sign(payload);

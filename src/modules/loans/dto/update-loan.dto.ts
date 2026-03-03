@@ -1,19 +1,15 @@
-import { IsIn, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { RepaymentFrequency } from '../../../entities/loan-product.entity';
 import { Type } from 'class-transformer';
-import { IsArray, IsBoolean } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { RepaymentFrequency } from '../../../entities/loan-product.entity';
 
-export class CreateLoanDto {
-  @ApiProperty()
+export class UpdateLoanDto {
+  @ApiProperty({ required: false })
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(0.01)
-  amount: number;
-
-  @ApiProperty()
-  @IsString()
-  clientId: string;
+  amount?: number;
 
   @ApiProperty({ required: false })
   @IsOptional()

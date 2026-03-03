@@ -8,6 +8,19 @@ import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class PaymentsService {
+  private readonly channelFallback = [
+    'cash',
+    'bank_transfer',
+    'mobile_money',
+    'ecocash',
+    'onemoney',
+    'zipit',
+    'rtgs',
+    'card',
+    'cheque',
+    'other',
+  ];
+
   constructor(
     @InjectRepository(Payment) private repo: Repository<Payment>,
     @InjectRepository(Loan) private loanRepo: Repository<Loan>,
@@ -17,6 +30,15 @@ export class PaymentsService {
 
   private round2(value: number) {
     return Number((Math.round(value * 100) / 100).toFixed(2));
+  }
+
+  private getAllowedChannels() {
+    const parsed = String(process.env.PAYMENT_CHANNELS || '')
+      .split(',')
+      .map((value) => value.trim().toLowerCase())
+      .filter((value) => value.length > 0);
+
+    return new Set(parsed.length > 0 ? parsed : this.channelFallback);
   }
 
   private allocation(due: number, paid: number, remaining: number) {
@@ -29,6 +51,14 @@ export class PaymentsService {
     const amount = Number(data.amount || 0);
     if (!amount || amount <= 0) {
       throw new BadRequestException('Payment amount must be greater than 0');
+    }
+
+    const rawChannel = String((data as any).channel || '').trim().toLowerCase();
+    const allowedChannels = this.getAllowedChannels();
+    if (rawChannel && !allowedChannels.has(rawChannel)) {
+      throw new BadRequestException(
+        `Unsupported payment channel. Allowed: ${Array.from(allowedChannels).join(', ')}`,
+      );
     }
 
     const loanId = (data.loan as any)?.id;
@@ -61,13 +91,25 @@ export class PaymentsService {
         relations: ['client', 'client.branch'],
       });
       if (!loan) throw new NotFoundException('Loan not found');
+      if (!['active', 'overdue'].includes(String(loan.status))) {
+        throw new BadRequestException('Payments can only be posted to active or overdue loans');
+      }
 
       const loanBranchId = ((loan.client as any)?.branch as any)?.id;
       if (user?.role !== 'admin' && user?.branch && loanBranchId && loanBranchId !== user.branch) {
         throw new ForbiddenException('You are not allowed to post payment for this loan');
       }
 
+      const currentBalance = Number(loan.balance || 0);
+      if (currentBalance <= 0) {
+        throw new BadRequestException('Loan has no outstanding balance');
+      }
+      if (amount > currentBalance + 0.01) {
+        throw new BadRequestException('Payment amount cannot exceed outstanding loan balance');
+      }
+
       const branchId = loanBranchId || (data as any).branch || user?.branch;
+      const isInstantlyReconciled = rawChannel === 'cash';
       const payment = paymentRepo.create({
         amount,
         loan: { id: loanId } as any,
@@ -75,10 +117,10 @@ export class PaymentsService {
         branch: branchId,
         idempotencyKey: idempotencyKey || undefined,
         externalReference: (data as any).externalReference,
-        channel: (data as any).channel,
+        channel: rawChannel || undefined,
         metadata: (data as any).metadata,
-        reconciliationStatus: 'reconciled',
-        reconciledAt: new Date(),
+        reconciliationStatus: isInstantlyReconciled ? 'reconciled' : 'pending',
+        reconciledAt: isInstantlyReconciled ? new Date() : undefined,
       } as any);
       const saved = await paymentRepo.save(payment as any);
 
@@ -139,14 +181,13 @@ export class PaymentsService {
       const now = new Date();
       const hasOverdue = installments.some((row) => row.status !== 'paid' && new Date(`${row.dueDate}T23:59:59.999Z`) < now);
 
-      const currentBalance = Number(loan.balance || 0);
       const nextBalance = this.round2(Math.max(0, currentBalance - amount));
       loan.balance = nextBalance as any;
       if (nextBalance <= 0) {
         loan.status = 'completed';
       } else if (hasOverdue) {
         loan.status = 'overdue';
-      } else if (loan.status === 'pending') {
+      } else {
         loan.status = 'active';
       }
       await localLoanRepo.save(loan);

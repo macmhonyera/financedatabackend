@@ -28,6 +28,8 @@ import { NotificationTemplate } from './entities/notification-template.entity';
 import { Notification } from './entities/notification.entity';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ClientAssetsModule } from './modules/client-assets/client-assets.module';
+import { BranchesModule } from './modules/branches/branches.module';
+import { SystemConfigModule } from './modules/system-config/system-config.module';
 
 @Module({
   imports: [
@@ -70,6 +72,8 @@ import { ClientAssetsModule } from './modules/client-assets/client-assets.module
     LoanProductsModule,
     ComplianceModule,
     NotificationsModule,
+    BranchesModule,
+    SystemConfigModule,
   ],
   providers: [RolesGuard],
 })

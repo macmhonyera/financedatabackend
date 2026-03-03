@@ -39,6 +39,8 @@ export class NotificationsController {
   }
 
   @Post('enqueue')
+  @UseGuards(RolesGuard)
+  @Roles('admin', 'manager')
   @ApiOperation({ summary: 'Queue a notification for delivery' })
   @ApiResponse({ status: 201, description: 'Notification queued' })
   enqueue(@Body() dto: EnqueueNotificationDto) {

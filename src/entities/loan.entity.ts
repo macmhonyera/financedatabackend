@@ -50,6 +50,21 @@ export class Loan {
   @Column({ nullable: true })
   dueAt?: Date;
 
+  @Column({ nullable: true })
+  approvedAt?: Date;
+
+  @Column({ nullable: true })
+  approvedByUserId?: string;
+
+  @Column({ nullable: true })
+  rejectedAt?: Date;
+
+  @Column({ nullable: true })
+  rejectedByUserId?: string;
+
+  @Column({ type: 'text', nullable: true })
+  rejectionReason?: string;
+
   @Column({ type: 'boolean', default: false })
   isCollateralized: boolean;
 

@@ -5,6 +5,9 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiBody } from '@nes
 import { Roles } from '../../common/roles.decorator';
 import { RolesGuard } from '../../common/roles.guard';
 import { CreateLoanDto } from './dto/create-loan.dto';
+import { UpdateLoanDto } from './dto/update-loan.dto';
+import { ApproveLoanDto } from './dto/approve-loan.dto';
+import { RejectLoanDto } from './dto/reject-loan.dto';
 
 @ApiTags('loans')
 @ApiBearerAuth()
@@ -55,7 +58,6 @@ export class LoansController {
         interestRateAnnual: body.interestRateAnnual,
         repaymentFrequency: body.repaymentFrequency,
         currency: body.currency,
-        disbursedAt: body.disbursedAt,
         isCollateralized: body.isCollateralized,
         collateralAssetIds: body.collateralAssetIds,
         collateralNotes: body.collateralNotes,
@@ -68,11 +70,11 @@ export class LoansController {
   @Roles('admin', 'manager')
   @Put(':id')
   @ApiOperation({ summary: 'Update loan (admin/manager)' })
-  @ApiBody({ type: CreateLoanDto })
+  @ApiBody({ type: UpdateLoanDto })
   @ApiResponse({ status: 200, description: 'Loan updated' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
-  update(@Req() req: any, @Param('id') id: string, @Body() body: Partial<CreateLoanDto>) {
+  update(@Req() req: any, @Param('id') id: string, @Body() body: UpdateLoanDto) {
     return this.svc.updateScoped(id, body as any, req.user);
   }
 
@@ -83,8 +85,10 @@ export class LoansController {
   @ApiResponse({ status: 200, description: 'Loan approved' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
-  approve(@Req() req: any, @Param('id') id: string) {
-    return this.svc.setStatusScoped(id, 'active', req.user);
+  approve(@Req() req: any, @Param('id') id: string, @Body() body: ApproveLoanDto) {
+    return this.svc.setStatusScoped(id, 'active', req.user, {
+      disbursedAt: body?.disbursedAt,
+    });
   }
 
   @UseGuards(RolesGuard)
@@ -94,8 +98,10 @@ export class LoansController {
   @ApiResponse({ status: 200, description: 'Loan rejected' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
-  reject(@Req() req: any, @Param('id') id: string) {
-    return this.svc.setStatusScoped(id, 'rejected', req.user);
+  reject(@Req() req: any, @Param('id') id: string, @Body() body: RejectLoanDto) {
+    return this.svc.setStatusScoped(id, 'rejected', req.user, {
+      reason: body?.reason,
+    });
   }
 
   @Get(':id/schedule')

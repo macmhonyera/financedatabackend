@@ -197,6 +197,12 @@ describe('E2E: frontend API contract compatibility', () => {
       })
       .expect(201);
 
+    await request(app.getHttpServer())
+      .post(`/loans/${loan.body.id}/approve`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({})
+      .expect(201);
+
     const created = await request(app.getHttpServer())
       .post('/payments')
       .set('Authorization', `Bearer ${adminToken}`)

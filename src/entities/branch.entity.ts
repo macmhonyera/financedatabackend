@@ -10,6 +10,9 @@ export class Branch {
   @Column()
   name: string;
 
+  @Column({ default: true })
+  active: boolean;
+
   @OneToMany(() => User, (u) => u.branch)
   users: User[];
 

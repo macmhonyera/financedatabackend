@@ -81,6 +81,13 @@ describe('Integration: loan + repayment + credit score flow', () => {
     expect(createdLoan.body.isCollateralized).toBe(true);
     expect(Number(createdLoan.body.collateralTotalMarketValue)).toBeGreaterThan(0);
     expect(Array.isArray(createdLoan.body.collateralSnapshot?.assets)).toBe(true);
+    expect(createdLoan.body.status).toBe('pending');
+
+    await request(app.getHttpServer())
+      .post(`/loans/${loanId}/approve`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({})
+      .expect(201);
 
     const payment = await request(app.getHttpServer())
       .post('/payments')

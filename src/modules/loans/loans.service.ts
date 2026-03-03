@@ -21,10 +21,23 @@ type LoanCreateInput = Partial<Loan> & {
   interestRateAnnual?: number;
   repaymentFrequency?: RepaymentFrequency;
   currency?: string;
-  disbursedAt?: string | Date;
   isCollateralized?: boolean;
   collateralAssetIds?: string[];
   collateralNotes?: string;
+};
+
+type LoanUpdateInput = LoanCreateInput;
+
+type CollateralResolution = {
+  collateralTotalMarketValue?: number;
+  collateralSnapshot?: Record<string, any>;
+};
+
+type LoanTerms = {
+  interestRateAnnual: number;
+  termMonths: number;
+  repaymentFrequency: RepaymentFrequency;
+  currency: string;
 };
 
 @Injectable()
@@ -47,6 +60,14 @@ export class LoansService {
 
   private toDateOnly(date: Date) {
     return date.toISOString().slice(0, 10);
+  }
+
+  private parseIsoDateOrThrow(value: string | Date | undefined, fieldName: string): Date {
+    const parsed = value ? new Date(value) : new Date();
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException(`${fieldName} must be a valid date`);
+    }
+    return parsed;
   }
 
   private addPeriod(baseDate: Date, periodNo: number, repaymentFrequency: RepaymentFrequency) {
@@ -73,6 +94,64 @@ export class LoansService {
     if (repaymentFrequency === 'weekly') return 52;
     if (repaymentFrequency === 'biweekly') return 26;
     return 12;
+  }
+
+  private normalizeTerms(input: {
+    termMonths?: number;
+    interestRateAnnual?: number;
+    repaymentFrequency?: RepaymentFrequency;
+    currency?: string;
+    product?: LoanProduct;
+    existing?: Loan;
+    preferProductDefaults?: boolean;
+  }): LoanTerms {
+    const { product, existing } = input;
+
+    const interestRateAnnual = Number(
+      input.interestRateAnnual ??
+        (input.preferProductDefaults ? product?.interestRateAnnual : undefined) ??
+        existing?.interestRateAnnual ??
+        product?.interestRateAnnual ??
+        0,
+    );
+    if (!Number.isFinite(interestRateAnnual) || interestRateAnnual < 0) {
+      throw new BadRequestException('interestRateAnnual must be greater than or equal to 0');
+    }
+
+    const termMonths = Number(
+      input.termMonths ??
+        (input.preferProductDefaults ? product?.termMonths : undefined) ??
+        existing?.termMonths ??
+        product?.termMonths ??
+        1,
+    );
+    if (!Number.isInteger(termMonths) || termMonths < 1 || termMonths > 360) {
+      throw new BadRequestException('termMonths must be an integer between 1 and 360');
+    }
+
+    const repaymentFrequency =
+      (input.repaymentFrequency as RepaymentFrequency) ||
+      ((input.preferProductDefaults ? product?.repaymentFrequency : undefined) as RepaymentFrequency) ||
+      (existing?.repaymentFrequency as RepaymentFrequency) ||
+      (product?.repaymentFrequency as RepaymentFrequency) ||
+      'monthly';
+
+    if (!['weekly', 'biweekly', 'monthly'].includes(repaymentFrequency)) {
+      throw new BadRequestException('repaymentFrequency must be one of weekly, biweekly, or monthly');
+    }
+
+    const currency = String(
+      input.currency ??
+        (input.preferProductDefaults ? product?.currency : undefined) ??
+        existing?.currency ??
+        product?.currency ??
+        'USD',
+    ).toUpperCase();
+    if (!/^[A-Z]{3}$/.test(currency)) {
+      throw new BadRequestException('currency must be an ISO 4217 3-letter code');
+    }
+
+    return { interestRateAnnual, termMonths, repaymentFrequency, currency };
   }
 
   private buildRepaymentSchedule(args: {
@@ -161,6 +240,91 @@ export class LoansService {
     return installments;
   }
 
+  private async resolveCollateral(args: {
+    clientId: string;
+    amount: number;
+    isCollateralized: boolean;
+    collateralAssetIds: string[];
+    collateralNotes?: string;
+  }): Promise<CollateralResolution> {
+    const { clientId, amount, isCollateralized, collateralAssetIds, collateralNotes } = args;
+
+    if (!isCollateralized) {
+      return {
+        collateralTotalMarketValue: undefined,
+        collateralSnapshot: undefined,
+      };
+    }
+
+    if (collateralAssetIds.length === 0) {
+      throw new BadRequestException('collateralAssetIds are required for collateralized loans');
+    }
+
+    const assets = await this.clientAssetRepo
+      .createQueryBuilder('asset')
+      .where('asset.clientId = :clientId', { clientId })
+      .andWhere('asset.status = :status', { status: 'active' })
+      .andWhere('asset.id IN (:...assetIds)', { assetIds: collateralAssetIds })
+      .getMany();
+
+    if (assets.length !== collateralAssetIds.length) {
+      throw new BadRequestException('One or more collateral assets are invalid or inactive');
+    }
+
+    const collateralTotalMarketValue = this.round2(
+      assets.reduce((sum, asset) => sum + Number(asset.marketValue || 0), 0),
+    );
+
+    const coverageRatio = amount > 0 ? this.round2(collateralTotalMarketValue / amount) : 0;
+
+    return {
+      collateralTotalMarketValue,
+      collateralSnapshot: {
+        notes: collateralNotes || undefined,
+        totalMarketValue: collateralTotalMarketValue,
+        coverageRatio,
+        assets: assets.map((asset) => ({
+          assetId: asset.id,
+          assetType: asset.assetType,
+          description: asset.description || null,
+          marketValue: Number(asset.marketValue || 0),
+          valuationDate: asset.valuationDate,
+        })),
+      },
+    };
+  }
+
+  private assertProductAmountBounds(amount: number, product?: LoanProduct) {
+    if (!product) return;
+
+    const minAmount = Number(product.minAmount || 0);
+    const maxAmount = Number(product.maxAmount || 0);
+    if (amount < minAmount || amount > maxAmount) {
+      throw new BadRequestException(
+        `Loan amount must be between ${minAmount} and ${maxAmount} for this product`,
+      );
+    }
+  }
+
+  private async maybeSendApprovalNotification(loan: Loan | null) {
+    if (!loan) return;
+
+    const firstDueDate = loan.installments?.[0]?.dueDate;
+    const phone = (loan.client as any)?.phone;
+    if (!phone) return;
+
+    await this.notifications.enqueue({
+      templateCode: 'LOAN_APPROVED_SMS',
+      recipientId: (loan.client as any)?.id,
+      recipientAddress: phone,
+      payload: {
+        clientName: (loan.client as any)?.name || 'Client',
+        loanId: loan.id,
+        firstDueDate: firstDueDate || 'N/A',
+      },
+    } as any);
+  }
+
   async create(data: LoanCreateInput, user?: any) {
     const clientId = (data.client as any)?.id;
     if (!clientId) {
@@ -178,9 +342,7 @@ export class LoansService {
     }
 
     const productId = data.productId || (data.product as any)?.id;
-    const product = productId
-      ? await this.productRepo.findOne({ where: { id: productId } })
-      : undefined;
+    const product = productId ? await this.productRepo.findOne({ where: { id: productId } }) : undefined;
 
     if (productId && !product) {
       throw new BadRequestException(`Loan product with ID ${productId} not found`);
@@ -189,127 +351,64 @@ export class LoansService {
       throw new BadRequestException('Loan product is not active');
     }
 
-    const amount = Number(data.amount || 0);
+    const amount = this.round2(Number(data.amount || 0));
     if (amount <= 0) {
       throw new BadRequestException('amount must be greater than 0');
     }
+    this.assertProductAmountBounds(amount, product);
 
-    if (product) {
-      const minAmount = Number(product.minAmount || 0);
-      const maxAmount = Number(product.maxAmount || 0);
-      if (amount < minAmount || amount > maxAmount) {
-        throw new BadRequestException(`Loan amount must be between ${minAmount} and ${maxAmount} for this product`);
-      }
-    }
-
-    const interestRateAnnual = Number(data.interestRateAnnual ?? product?.interestRateAnnual ?? 0);
-    const termMonths = Number(data.termMonths ?? product?.termMonths ?? 1);
-    const repaymentFrequency =
-      (data.repaymentFrequency as RepaymentFrequency) || product?.repaymentFrequency || 'monthly';
-    const currency = (data.currency || product?.currency || 'USD').toUpperCase();
-    const scheduleType = (product?.scheduleType || 'reducing') as ScheduleType;
-    const processingFeeRate = Number(product?.processingFeeRate || 0);
-    const processingFee = this.round2((amount * processingFeeRate) / 100);
-    const openingBalance = this.round2(amount + processingFee);
-
-    const disbursedAt = data.disbursedAt ? new Date(data.disbursedAt) : new Date();
-    if (Number.isNaN(disbursedAt.getTime())) {
-      throw new BadRequestException('disbursedAt must be a valid date');
-    }
+    const terms = this.normalizeTerms({
+      termMonths: data.termMonths,
+      interestRateAnnual: data.interestRateAnnual,
+      repaymentFrequency: data.repaymentFrequency,
+      currency: data.currency,
+      product,
+    });
 
     const collateralAssetIds = Array.isArray(data.collateralAssetIds)
       ? Array.from(new Set(data.collateralAssetIds.filter((id) => typeof id === 'string' && id.trim().length > 0)))
       : [];
     const isCollateralized = Boolean(data.isCollateralized || collateralAssetIds.length > 0);
 
-    let collateralTotalMarketValue: number | undefined;
-    let collateralSnapshot: Record<string, any> | undefined;
-
-    if (isCollateralized) {
-      if (collateralAssetIds.length === 0) {
-        throw new BadRequestException('collateralAssetIds are required for collateralized loans');
-      }
-
-      const assets = await this.clientAssetRepo
-        .createQueryBuilder('asset')
-        .where('asset.clientId = :clientId', { clientId })
-        .andWhere('asset.status = :status', { status: 'active' })
-        .andWhere('asset.id IN (:...assetIds)', { assetIds: collateralAssetIds })
-        .getMany();
-
-      if (assets.length !== collateralAssetIds.length) {
-        throw new BadRequestException('One or more collateral assets are invalid or inactive');
-      }
-
-      collateralTotalMarketValue = this.round2(
-        assets.reduce((sum, asset) => sum + Number(asset.marketValue || 0), 0),
-      );
-      const coverageRatio = amount > 0 ? this.round2(collateralTotalMarketValue / amount) : 0;
-
-      collateralSnapshot = {
-        notes: data.collateralNotes || undefined,
-        totalMarketValue: collateralTotalMarketValue,
-        coverageRatio,
-        assets: assets.map((asset) => ({
-          assetId: asset.id,
-          assetType: asset.assetType,
-          description: asset.description || null,
-          marketValue: Number(asset.marketValue || 0),
-          valuationDate: asset.valuationDate,
-        })),
-      };
-    }
-
-    const createdLoan = await this.repo.manager.transaction(async (manager) => {
-      const loanRepo = manager.getRepository(Loan);
-      const installmentRepo = manager.getRepository(LoanInstallment);
-
-      const entity = loanRepo.create({
-        amount: this.round2(amount),
-        balance: openingBalance,
-        status: 'pending',
-        client: { id: clientId } as any,
-        product: product ? ({ id: product.id } as any) : undefined,
-        currency,
-        interestRateAnnual,
-        termMonths,
-        repaymentFrequency,
-        disbursedAt,
-        isCollateralized,
-        collateralTotalMarketValue,
-        collateralSnapshot,
-      } as Loan);
-
-      const saved = await loanRepo.save(entity as Loan);
-
-      const schedule = this.buildRepaymentSchedule({
-        loanId: saved.id,
-        principal: amount,
-        interestRateAnnual,
-        termMonths,
-        repaymentFrequency,
-        scheduleType,
-        disbursedAt,
-        processingFee,
-      });
-
-      if (schedule.length > 0) {
-        await installmentRepo.save(schedule as any);
-        saved.dueAt = new Date(`${schedule[schedule.length - 1].dueDate as string}T00:00:00.000Z`);
-        await loanRepo.save(saved);
-      }
-
-      return loanRepo.findOne({
-        where: { id: saved.id },
-        relations: ['client', 'client.branch', 'payments', 'product', 'installments'],
-      });
+    const collateral = await this.resolveCollateral({
+      clientId,
+      amount,
+      isCollateralized,
+      collateralAssetIds,
+      collateralNotes: data.collateralNotes,
     });
 
+    const entity = this.repo.create({
+      amount,
+      balance: 0,
+      status: 'pending',
+      client: { id: clientId } as any,
+      product: product ? ({ id: product.id } as any) : undefined,
+      currency: terms.currency,
+      interestRateAnnual: terms.interestRateAnnual,
+      termMonths: terms.termMonths,
+      repaymentFrequency: terms.repaymentFrequency,
+      disbursedAt: undefined,
+      dueAt: undefined,
+      isCollateralized,
+      collateralTotalMarketValue: collateral.collateralTotalMarketValue,
+      collateralSnapshot: collateral.collateralSnapshot,
+      approvedAt: undefined,
+      approvedByUserId: undefined,
+      rejectedAt: undefined,
+      rejectedByUserId: undefined,
+      rejectionReason: undefined,
+    } as Loan);
+
+    const saved = await this.repo.save(entity as Loan);
+
+    const createdLoan = await this.findById(saved.id);
+
     try {
-      const scoredClientId = (data.client as any)?.id || (createdLoan as any)?.client?.id || null;
+      const scoredClientId = clientId || (createdLoan as any)?.client?.id || null;
       const features = {
         amount,
-        balance: openingBalance,
+        balance: amount,
         paid_total: 0,
         num_payments: 0,
         age_days: 0,
@@ -360,11 +459,31 @@ export class LoansService {
   }
 
   async listScheduleScoped(id: string, user: any) {
-    await this.findByIdScoped(id, user);
+    const loan = await this.findByIdScoped(id, user);
     const installments = await this.installmentRepo.find({
       where: { loan: { id } as any },
       order: { installmentNumber: 'ASC' },
     });
+
+    if (installments.length === 0 && loan.status === 'pending') {
+      const product = (loan.product as any)?.id
+        ? await this.productRepo.findOne({ where: { id: (loan.product as any).id } })
+        : undefined;
+      const scheduleType = (product?.scheduleType || 'reducing') as ScheduleType;
+      const processingFeeRate = Number(product?.processingFeeRate || 0);
+      const processingFee = this.round2((Number(loan.amount || 0) * processingFeeRate) / 100);
+
+      return this.buildRepaymentSchedule({
+        loanId: loan.id,
+        principal: Number(loan.amount || 0),
+        interestRateAnnual: Number(loan.interestRateAnnual || product?.interestRateAnnual || 0),
+        termMonths: Number(loan.termMonths || product?.termMonths || 1),
+        repaymentFrequency: (loan.repaymentFrequency as RepaymentFrequency) || product?.repaymentFrequency || 'monthly',
+        scheduleType,
+        disbursedAt: new Date(),
+        processingFee,
+      });
+    }
 
     const now = new Date();
     for (const row of installments) {
@@ -434,59 +553,230 @@ export class LoansService {
     };
   }
 
-  async update(id: string, updates: Partial<Loan>) {
-    await this.repo.update(id, updates as any);
+  async update(id: string, updates: LoanUpdateInput) {
+    const loan = await this.findById(id);
+    if (!loan) throw new NotFoundException('Loan not found');
+    return this.updateScoped(id, updates, { role: 'admin' });
+  }
+
+  async updateScoped(id: string, updates: LoanUpdateInput, user: any) {
+    const loan = await this.findByIdScoped(id, user);
+
+    if (loan.status !== 'pending') {
+      throw new BadRequestException('Only pending loan applications can be updated');
+    }
+
+    const currentProductId = (loan.product as any)?.id;
+    const nextProductId = updates.productId || currentProductId;
+    const product = nextProductId
+      ? await this.productRepo.findOne({ where: { id: nextProductId } })
+      : undefined;
+
+    if (nextProductId && !product) {
+      throw new BadRequestException(`Loan product with ID ${nextProductId} not found`);
+    }
+    if (product && !product.isActive) {
+      throw new BadRequestException('Loan product is not active');
+    }
+
+    const amount = this.round2(Number(updates.amount ?? loan.amount));
+    if (amount <= 0) {
+      throw new BadRequestException('amount must be greater than 0');
+    }
+    this.assertProductAmountBounds(amount, product);
+
+    const terms = this.normalizeTerms({
+      termMonths: updates.termMonths,
+      interestRateAnnual: updates.interestRateAnnual,
+      repaymentFrequency: updates.repaymentFrequency,
+      currency: updates.currency,
+      product,
+      existing: loan,
+      preferProductDefaults: Boolean(updates.productId),
+    });
+
+    const existingCollateralAssetIds = Array.isArray((loan.collateralSnapshot as any)?.assets)
+      ? (loan.collateralSnapshot as any).assets
+          .map((asset: any) => String(asset?.assetId || '').trim())
+          .filter((id: string) => id.length > 0)
+      : [];
+
+    const rawCollateralAssetIds: string[] = updates.collateralAssetIds ?? existingCollateralAssetIds;
+    const collateralAssetIds: string[] = Array.from(
+      new Set(
+        rawCollateralAssetIds.filter(
+          (assetId): assetId is string => typeof assetId === 'string' && assetId.trim().length > 0,
+        ),
+      ),
+    );
+
+    const isCollateralized =
+      updates.isCollateralized !== undefined
+        ? Boolean(updates.isCollateralized)
+        : Boolean(loan.isCollateralized || collateralAssetIds.length > 0);
+
+    const previousNotes = String((loan.collateralSnapshot as any)?.notes || '').trim();
+    const collateralNotes =
+      updates.collateralNotes !== undefined ? updates.collateralNotes?.trim() : previousNotes || undefined;
+
+    const collateral = await this.resolveCollateral({
+      clientId: (loan.client as any)?.id,
+      amount,
+      isCollateralized,
+      collateralAssetIds,
+      collateralNotes,
+    });
+
+    await this.repo.update(id, {
+      amount,
+      product: product ? ({ id: product.id } as any) : loan.product,
+      interestRateAnnual: terms.interestRateAnnual,
+      termMonths: terms.termMonths,
+      repaymentFrequency: terms.repaymentFrequency,
+      currency: terms.currency,
+      isCollateralized,
+      collateralTotalMarketValue: collateral.collateralTotalMarketValue,
+      collateralSnapshot: collateral.collateralSnapshot,
+    } as any);
+
     return this.findById(id);
   }
 
-  async updateScoped(id: string, updates: Partial<Loan>, user: any) {
-    await this.findByIdScoped(id, user);
-    await this.repo.update(id, updates as any);
-    return this.findById(id);
+  async setStatus(id: string, status: Loan['status'], actor?: any, options?: { reason?: string; disbursedAt?: string }) {
+    const actingUser = actor || { role: 'admin' };
+    return this.setStatusScoped(id, status, actingUser, options);
   }
 
-  async setStatus(id: string, status: Loan['status']) {
-    await this.repo.update(id, { status } as any);
-    const loan = await this.findById(id);
-    if (loan && status === 'active') {
-      const firstDueDate = loan.installments?.[0]?.dueDate;
-      const phone = (loan.client as any)?.phone;
-      if (phone) {
-        await this.notifications.enqueue({
-          templateCode: 'LOAN_APPROVED_SMS',
-          recipientId: (loan.client as any)?.id,
-          recipientAddress: phone,
-          payload: {
-            clientName: (loan.client as any)?.name || 'Client',
-            loanId: loan.id,
-            firstDueDate: firstDueDate || 'N/A',
-          },
-        } as any);
-      }
+  async setStatusScoped(
+    id: string,
+    status: Loan['status'],
+    user: any,
+    options?: { reason?: string; disbursedAt?: string },
+  ) {
+    if (!['active', 'rejected'].includes(status)) {
+      throw new BadRequestException('Only active or rejected status transitions are supported via this endpoint');
     }
-    return loan;
-  }
 
-  async setStatusScoped(id: string, status: Loan['status'], user: any) {
-    await this.findByIdScoped(id, user);
-    await this.repo.update(id, { status } as any);
-    const loan = await this.findById(id);
-    if (loan && status === 'active') {
-      const firstDueDate = loan.installments?.[0]?.dueDate;
-      const phone = (loan.client as any)?.phone;
-      if (phone) {
-        await this.notifications.enqueue({
-          templateCode: 'LOAN_APPROVED_SMS',
-          recipientId: (loan.client as any)?.id,
-          recipientAddress: phone,
-          payload: {
-            clientName: (loan.client as any)?.name || 'Client',
-            loanId: loan.id,
-            firstDueDate: firstDueDate || 'N/A',
-          },
-        } as any);
+    const existingLoan = await this.findByIdScoped(id, user);
+    if (existingLoan.status !== 'pending') {
+      throw new BadRequestException('Only pending loan applications can be approved or rejected');
+    }
+
+    const updatedLoan = await this.repo.manager.transaction(async (manager) => {
+      const loanRepo = manager.getRepository(Loan);
+      const productRepo = manager.getRepository(LoanProduct);
+      const installmentRepo = manager.getRepository(LoanInstallment);
+
+      const loan = await loanRepo.findOne({
+        where: { id },
+        relations: ['client', 'client.branch', 'product', 'installments'],
+      });
+      if (!loan) throw new NotFoundException('Loan not found');
+
+      const branchId = ((loan.client as any)?.branch as any)?.id;
+      if (user?.role !== 'admin' && (!user?.branch || user.branch !== branchId)) {
+        throw new ForbiddenException('You are not allowed to approve/reject this loan');
+      }
+
+      if (loan.status !== 'pending') {
+        throw new BadRequestException('Only pending loan applications can be approved or rejected');
+      }
+
+      if (status === 'rejected') {
+        loan.status = 'rejected';
+        loan.rejectedAt = new Date();
+        loan.rejectedByUserId = user?.id;
+        loan.rejectionReason = options?.reason?.trim() || undefined;
+        loan.approvedAt = null as any;
+        loan.approvedByUserId = null as any;
+        loan.disbursedAt = null as any;
+        loan.dueAt = null as any;
+        loan.balance = 0 as any;
+
+        await installmentRepo.delete({ loan: { id: loan.id } as any });
+        await loanRepo.save(loan);
+      } else {
+        const product = loan.product
+          ? await productRepo.findOne({ where: { id: (loan.product as any)?.id } })
+          : undefined;
+
+        if (loan.product && !product) {
+          throw new BadRequestException('Loan product referenced by loan was not found');
+        }
+        if (product && !product.isActive) {
+          throw new BadRequestException('Loan product is no longer active');
+        }
+
+        const disbursedAt = this.parseIsoDateOrThrow(options?.disbursedAt, 'disbursedAt');
+        const amount = Number(loan.amount || 0);
+        if (amount <= 0) {
+          throw new BadRequestException('Loan amount is invalid and cannot be approved');
+        }
+
+        const terms = this.normalizeTerms({
+          termMonths: Number(loan.termMonths || product?.termMonths || 1),
+          interestRateAnnual: Number(loan.interestRateAnnual ?? product?.interestRateAnnual ?? 0),
+          repaymentFrequency: (loan.repaymentFrequency as RepaymentFrequency) || product?.repaymentFrequency,
+          currency: loan.currency || product?.currency,
+          product,
+          existing: loan,
+        });
+
+        const scheduleType = (product?.scheduleType || 'reducing') as ScheduleType;
+        const processingFeeRate = Number(product?.processingFeeRate || 0);
+        const processingFee = this.round2((amount * processingFeeRate) / 100);
+        const openingBalance = this.round2(amount + processingFee);
+
+        await installmentRepo.delete({ loan: { id: loan.id } as any });
+
+        const schedule = this.buildRepaymentSchedule({
+          loanId: loan.id,
+          principal: amount,
+          interestRateAnnual: terms.interestRateAnnual,
+          termMonths: terms.termMonths,
+          repaymentFrequency: terms.repaymentFrequency,
+          scheduleType,
+          disbursedAt,
+          processingFee,
+        });
+
+        if (schedule.length > 0) {
+          await installmentRepo.save(schedule as any);
+        }
+
+        loan.balance = openingBalance as any;
+        loan.status = 'active';
+        loan.currency = terms.currency;
+        loan.interestRateAnnual = terms.interestRateAnnual as any;
+        loan.termMonths = terms.termMonths;
+        loan.repaymentFrequency = terms.repaymentFrequency;
+        loan.disbursedAt = disbursedAt;
+        loan.dueAt = schedule.length
+          ? new Date(`${schedule[schedule.length - 1].dueDate as string}T00:00:00.000Z`)
+          : null as any;
+        loan.approvedAt = new Date();
+        loan.approvedByUserId = user?.id;
+        loan.rejectedAt = null as any;
+        loan.rejectedByUserId = null as any;
+        loan.rejectionReason = null as any;
+
+        await loanRepo.save(loan);
+      }
+
+      return loanRepo.findOne({
+        where: { id: loan.id },
+        relations: ['client', 'client.branch', 'payments', 'product', 'installments'],
+      });
+    });
+
+    if (status === 'active') {
+      try {
+        await this.maybeSendApprovalNotification(updatedLoan as any);
+      } catch (err: any) {
+        this.logger.warn('Loan approved, but notification failed: ' + (err?.message || err));
       }
     }
-    return loan;
+
+    return updatedLoan;
   }
 }

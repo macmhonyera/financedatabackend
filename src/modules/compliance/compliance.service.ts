@@ -244,6 +244,16 @@ export class ComplianceService {
     const amlEvents = await this.listAmlEvents(user);
     const openAmlEvents = amlEvents.filter((a) => a.status === 'open' || a.status === 'under_review').length;
 
+    const totalKycProfiles =
+      user?.role === 'admin'
+        ? await this.kycRepo.count()
+        : await this.kycRepo
+            .createQueryBuilder('kyc')
+            .leftJoin('kyc.client', 'client')
+            .leftJoin('client.branch', 'branch')
+            .where('branch.id = :branchId', { branchId: user?.branch || '' })
+            .getCount();
+
     return {
       asOf: new Date().toISOString(),
       activeLoans: scopedLoans.filter((loan) => loan.status === 'active').length,
@@ -254,7 +264,7 @@ export class ComplianceService {
       par30Ratio,
       complaintsOpen: openComplaints,
       amlOpenEvents: openAmlEvents,
-      totalKycProfiles: await this.kycRepo.count(),
+      totalKycProfiles,
     };
   }
 
