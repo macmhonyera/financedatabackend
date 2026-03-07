@@ -68,4 +68,22 @@ export class NotificationsController {
   myNotifications(@Req() req: any) {
     return this.svc.getMyInApp(req.user);
   }
+
+  @Get('my/unread-count')
+  @ApiOperation({ summary: 'Count my unread in-app notifications' })
+  myUnreadCount(@Req() req: any) {
+    return this.svc.getMyInAppUnreadCount(req.user);
+  }
+
+  @Post('my/read-all')
+  @ApiOperation({ summary: 'Mark all my in-app notifications as read' })
+  markAllMyRead(@Req() req: any) {
+    return this.svc.markAllMyInAppRead(req.user);
+  }
+
+  @Patch(':id/read')
+  @ApiOperation({ summary: 'Mark one of my in-app notifications as read' })
+  markRead(@Req() req: any, @Param('id') id: string) {
+    return this.svc.markMyInAppNotificationRead(id, req.user);
+  }
 }

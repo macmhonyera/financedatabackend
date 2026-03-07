@@ -39,6 +39,12 @@ export class Notification {
   @Column({ type: 'varchar', default: 'pending' })
   status: NotificationStatus;
 
+  @Column({ type: 'boolean', default: false })
+  isRead: boolean;
+
+  @Column({ nullable: true })
+  readAt?: Date;
+
   @Column({ type: 'int', default: 0 })
   attempts: number;
 

@@ -107,6 +107,57 @@ export class NotificationsService {
     });
   }
 
+  async getMyInAppUnreadCount(user: any) {
+    const unread = await this.repo.count({
+      where: {
+        recipientId: user?.id,
+        channel: 'in_app',
+        isRead: false,
+      } as any,
+    });
+
+    return { unread };
+  }
+
+  async markMyInAppNotificationRead(id: string, user: any) {
+    const notification = await this.repo.findOne({
+      where: {
+        id,
+        recipientId: user?.id,
+        channel: 'in_app',
+      } as any,
+      relations: ['template'],
+    });
+
+    if (!notification) {
+      throw new NotFoundException('Notification not found');
+    }
+
+    if (!notification.isRead) {
+      notification.isRead = true;
+      notification.readAt = new Date();
+      await this.repo.save(notification);
+    }
+
+    return notification;
+  }
+
+  async markAllMyInAppRead(user: any) {
+    const result = await this.repo
+      .createQueryBuilder()
+      .update(Notification)
+      .set({
+        isRead: true,
+        readAt: () => 'CURRENT_TIMESTAMP',
+      } as any)
+      .where('recipientId = :recipientId', { recipientId: user?.id })
+      .andWhere('channel = :channel', { channel: 'in_app' })
+      .andWhere('(isRead = false OR isRead IS NULL)')
+      .execute();
+
+    return { updated: Number(result.affected || 0) };
+  }
+
   private async dispatch(notification: Notification) {
     if (notification.channel === 'in_app') {
       return {
