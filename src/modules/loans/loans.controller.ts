@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Put, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Put, UseGuards, Req, Query } from '@nestjs/common';
 import { LoansService } from './loans.service';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiBody } from '@nestjs/swagger';
@@ -29,6 +29,13 @@ export class LoansController {
   @ApiResponse({ status: 200, description: 'Portfolio metrics' })
   portfolioSummary(@Req() req: any) {
     return this.svc.portfolioSummary(req.user);
+  }
+
+  @Get('collections/due-today')
+  @ApiOperation({ summary: 'Collections schedule due on a date (defaults to today)' })
+  @ApiResponse({ status: 200, description: 'Due installments for collections dashboard' })
+  collectionsDueToday(@Req() req: any, @Query('date') date?: string) {
+    return this.svc.collectionsDueTodayScoped(req.user, date);
   }
 
   @Get(':id')
@@ -102,6 +109,15 @@ export class LoansController {
     return this.svc.setStatusScoped(id, 'rejected', req.user, {
       reason: body?.reason,
     });
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('admin', 'manager')
+  @Post(':id/rebuild-schedule')
+  @ApiOperation({ summary: 'Rebuild loan repayment schedule from loan terms (admin/manager)' })
+  @ApiResponse({ status: 200, description: 'Loan schedule rebuilt' })
+  rebuildSchedule(@Req() req: any, @Param('id') id: string) {
+    return this.svc.rebuildScheduleScoped(id, req.user);
   }
 
   @Get(':id/schedule')

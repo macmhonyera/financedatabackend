@@ -240,6 +240,15 @@ export class LoansService {
     return installments;
   }
 
+  private normalizeDateInput(dateInput?: string) {
+    if (!dateInput) return this.toDateOnly(new Date());
+    const trimmed = String(dateInput).trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      throw new BadRequestException('date must be provided in YYYY-MM-DD format');
+    }
+    return trimmed;
+  }
+
   private async resolveCollateral(args: {
     clientId: string;
     amount: number;
@@ -669,7 +678,7 @@ export class LoansService {
 
       const loan = await loanRepo.findOne({
         where: { id },
-        relations: ['client', 'client.branch', 'product', 'installments'],
+        relations: ['client', 'client.branch', 'product'],
       });
       if (!loan) throw new NotFoundException('Loan not found');
 
@@ -741,7 +750,10 @@ export class LoansService {
         });
 
         if (schedule.length > 0) {
-          await installmentRepo.save(schedule as any);
+          if (schedule.some((row) => !(row.loan as any)?.id)) {
+            throw new BadRequestException('Generated schedule contains missing loan relation');
+          }
+          await installmentRepo.save(installmentRepo.create(schedule as any));
         }
 
         loan.balance = openingBalance as any;
@@ -778,5 +790,138 @@ export class LoansService {
     }
 
     return updatedLoan;
+  }
+
+  async rebuildScheduleScoped(id: string, user: any) {
+    const existingLoan = await this.findByIdScoped(id, user);
+
+    if (!['active', 'overdue', 'defaulted'].includes(existingLoan.status)) {
+      throw new BadRequestException('Schedule rebuild is only supported for active/overdue/defaulted loans');
+    }
+
+    const repaired = await this.repo.manager.transaction(async (manager) => {
+      const loanRepo = manager.getRepository(Loan);
+      const productRepo = manager.getRepository(LoanProduct);
+      const installmentRepo = manager.getRepository(LoanInstallment);
+
+      const loan = await loanRepo.findOne({
+        where: { id },
+        relations: ['client', 'client.branch', 'product'],
+      });
+      if (!loan) throw new NotFoundException('Loan not found');
+
+      const branchId = ((loan.client as any)?.branch as any)?.id;
+      if (user?.role !== 'admin' && (!user?.branch || user.branch !== branchId)) {
+        throw new ForbiddenException('You are not allowed to rebuild this loan schedule');
+      }
+
+      const product = loan.product
+        ? await productRepo.findOne({ where: { id: (loan.product as any)?.id } })
+        : undefined;
+
+      const amount = Number(loan.amount || 0);
+      if (amount <= 0) {
+        throw new BadRequestException('Loan amount is invalid and cannot be scheduled');
+      }
+
+      const terms = this.normalizeTerms({
+        termMonths: Number(loan.termMonths || product?.termMonths || 1),
+        interestRateAnnual: Number(loan.interestRateAnnual ?? product?.interestRateAnnual ?? 0),
+        repaymentFrequency: (loan.repaymentFrequency as RepaymentFrequency) || product?.repaymentFrequency,
+        currency: loan.currency || product?.currency,
+        product,
+        existing: loan,
+      });
+
+      const disbursedAt = this.parseIsoDateOrThrow(
+        loan.disbursedAt || loan.createdAt,
+        'disbursedAt',
+      );
+      const scheduleType = (product?.scheduleType || 'reducing') as ScheduleType;
+      const processingFeeRate = Number(product?.processingFeeRate || 0);
+      const processingFee = this.round2((amount * processingFeeRate) / 100);
+
+      await installmentRepo.delete({ loan: { id: loan.id } as any });
+      const schedule = this.buildRepaymentSchedule({
+        loanId: loan.id,
+        principal: amount,
+        interestRateAnnual: terms.interestRateAnnual,
+        termMonths: terms.termMonths,
+        repaymentFrequency: terms.repaymentFrequency,
+        scheduleType,
+        disbursedAt,
+        processingFee,
+      });
+
+      if (schedule.length > 0) {
+        if (schedule.some((row) => !(row.loan as any)?.id)) {
+          throw new BadRequestException('Generated schedule contains missing loan relation');
+        }
+        await installmentRepo.save(installmentRepo.create(schedule as any));
+      }
+
+      loan.dueAt = schedule.length
+        ? new Date(`${schedule[schedule.length - 1].dueDate as string}T00:00:00.000Z`)
+        : loan.dueAt;
+      await loanRepo.save(loan);
+
+      return loanRepo.findOne({
+        where: { id: loan.id },
+        relations: ['client', 'client.branch', 'payments', 'product', 'installments'],
+      });
+    });
+
+    return repaired;
+  }
+
+  async collectionsDueTodayScoped(user: any, dateInput?: string) {
+    const asOfDate = this.normalizeDateInput(dateInput);
+
+    const qb = this.installmentRepo
+      .createQueryBuilder('installment')
+      .innerJoinAndSelect('installment.loan', 'loan')
+      .innerJoinAndSelect('loan.client', 'client')
+      .leftJoinAndSelect('client.branch', 'branch')
+      .where('installment.dueDate = :asOfDate', { asOfDate })
+      .andWhere('installment.status IN (:...statuses)', {
+        statuses: ['pending', 'partial', 'overdue'],
+      })
+      .andWhere('loan.status IN (:...loanStatuses)', {
+        loanStatuses: ['active', 'overdue', 'defaulted'],
+      })
+      .orderBy('installment.installmentNumber', 'ASC');
+
+    if (user?.role !== 'admin') {
+      qb.andWhere('branch.id = :branchId', { branchId: user?.branch || '__NO_BRANCH__' });
+    }
+
+    const rows = await qb.getMany();
+
+    const orphanedInstallments = await this.installmentRepo
+      .createQueryBuilder('installment')
+      .where('installment.dueDate = :asOfDate', { asOfDate })
+      .andWhere('installment.loanId IS NULL')
+      .andWhere('installment.status IN (:...statuses)', {
+        statuses: ['pending', 'partial', 'overdue'],
+      })
+      .getCount();
+
+    return {
+      asOfDate,
+      orphanedInstallments,
+      items: rows.map((row) => ({
+        installmentId: row.id,
+        loanId: (row.loan as any)?.id,
+        installmentNumber: row.installmentNumber,
+        dueDate: row.dueDate,
+        amountDue: Number(row.totalDue || 0),
+        status: row.status,
+        clientId: (row.loan as any)?.client?.id,
+        clientName: (row.loan as any)?.client?.name,
+        branchId: ((row.loan as any)?.client?.branch as any)?.id || null,
+        branchName: ((row.loan as any)?.client?.branch as any)?.name || null,
+        currency: (row.loan as any)?.currency || 'USD',
+      })),
+    };
   }
 }

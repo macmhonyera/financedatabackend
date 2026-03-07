@@ -3,6 +3,8 @@ import {
   PrimaryGeneratedColumn,
   Column,
   ManyToOne,
+  JoinColumn,
+  RelationId,
   CreateDateColumn,
   UpdateDateColumn,
 } from 'typeorm';
@@ -15,8 +17,12 @@ export class LoanInstallment {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @ManyToOne(() => Loan, (loan) => loan.installments, { onDelete: 'CASCADE' })
+  @ManyToOne(() => Loan, (loan) => loan.installments, { onDelete: 'CASCADE', nullable: false })
+  @JoinColumn({ name: 'loanId' })
   loan: Loan;
+
+  @RelationId((installment: LoanInstallment) => installment.loan)
+  loanId: string;
 
   @Column({ type: 'int' })
   installmentNumber: number;
