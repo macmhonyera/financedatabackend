@@ -334,6 +334,39 @@ export class LoansService {
     } as any);
   }
 
+  private async maybeNotifyLoanApplicantStatusChange(
+    loan: Loan | null,
+    status: 'active' | 'rejected',
+    actor?: any,
+    reason?: string,
+  ) {
+    if (!loan) return;
+
+    const recipientId = String((loan as any).appliedByUserId || '').trim();
+    if (!recipientId) return;
+    if (actor?.id && recipientId === actor.id) return;
+
+    const clientName = String((loan.client as any)?.name || 'client');
+    const message =
+      status === 'active'
+        ? `Loan ${loan.id} for ${clientName} has been approved.`
+        : `Loan ${loan.id} for ${clientName} has been rejected${reason ? `: ${reason}` : '.'}`;
+
+    await this.notifications.enqueue({
+      channel: 'in_app',
+      recipientId,
+      recipientAddress: `user:${recipientId}`,
+      message,
+      payload: {
+        loanId: loan.id,
+        status,
+        reason: reason || undefined,
+        clientName,
+      },
+      maxAttempts: 1,
+    } as any);
+  }
+
   async create(data: LoanCreateInput, user?: any) {
     const clientId = (data.client as any)?.id;
     if (!clientId) {
@@ -402,6 +435,9 @@ export class LoansService {
       isCollateralized,
       collateralTotalMarketValue: collateral.collateralTotalMarketValue,
       collateralSnapshot: collateral.collateralSnapshot,
+      loanOfficer: String((data as any).loanOfficer || user?.name || client.loanOfficer || '').trim() || undefined,
+      appliedByUserId: user?.id || undefined,
+      appliedByName: user?.name || undefined,
       approvedAt: undefined,
       approvedByUserId: undefined,
       rejectedAt: undefined,
@@ -506,7 +542,10 @@ export class LoansService {
 
   async portfolioSummary(user: any) {
     const loans = await this.findAllScoped(user);
-    const portfolioLoans = loans.filter((loan) => ['active', 'overdue', 'defaulted'].includes(loan.status));
+    const approvedLoans = loans.filter((loan) => !['pending', 'rejected'].includes(loan.status));
+    const portfolioLoans = approvedLoans.filter((loan) =>
+      ['active', 'overdue', 'defaulted'].includes(loan.status),
+    );
     const grossPortfolio = this.round2(
       portfolioLoans.reduce((sum, loan) => sum + Number(loan.balance || 0), 0),
     );
@@ -544,10 +583,10 @@ export class LoansService {
 
     return {
       asOf: now.toISOString(),
-      totalLoans: loans.length,
-      activeLoans: loans.filter((loan) => loan.status === 'active').length,
-      overdueLoans: loans.filter((loan) => loan.status === 'overdue').length,
-      defaultedLoans: loans.filter((loan) => loan.status === 'defaulted').length,
+      totalLoans: approvedLoans.length,
+      activeLoans: approvedLoans.filter((loan) => loan.status === 'active').length,
+      overdueLoans: approvedLoans.filter((loan) => loan.status === 'overdue').length,
+      defaultedLoans: approvedLoans.filter((loan) => loan.status === 'defaulted').length,
       grossPortfolio,
       overduePrincipal: {
         par1: this.round2(overduePrincipal.par1),
@@ -787,6 +826,17 @@ export class LoansService {
       } catch (err: any) {
         this.logger.warn('Loan approved, but notification failed: ' + (err?.message || err));
       }
+    }
+
+    try {
+      await this.maybeNotifyLoanApplicantStatusChange(
+        updatedLoan as any,
+        status as 'active' | 'rejected',
+        user,
+        options?.reason,
+      );
+    } catch (err: any) {
+      this.logger.warn('Loan status changed, but applicant notification failed: ' + (err?.message || err));
     }
 
     return updatedLoan;

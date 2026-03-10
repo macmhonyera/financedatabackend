@@ -7,6 +7,7 @@ describe('Integration: loan + repayment + credit score flow', () => {
   let app: INestApplication;
   let moduleRef: TestingModule;
   let adminToken: string;
+  let officerToken: string;
 
   beforeAll(async () => {
     const setup = await createTestingApp();
@@ -15,6 +16,7 @@ describe('Integration: loan + repayment + credit score flow', () => {
 
     await seedDatabase(moduleRef);
     adminToken = await loginAndGetToken(app, 'admin@example.com', 'admin123');
+    officerToken = await loginAndGetToken(app, 'officer@harare.com', 'officer123');
   });
 
   afterAll(async () => {
@@ -134,5 +136,61 @@ describe('Integration: loan + repayment + credit score flow', () => {
     expect(Array.isArray(history.body)).toBe(true);
     expect(history.body.length).toBeGreaterThanOrEqual(1);
     expect(history.body[0].clientId).toBe(clientId);
+  });
+
+  it('notifies applying loan officer when admin changes loan status', async () => {
+    const createdClient = await request(app.getHttpServer())
+      .post('/clients')
+      .set('Authorization', `Bearer ${officerToken}`)
+      .send({
+        name: 'Officer Notification Client',
+        phone: '+1555000111',
+      })
+      .expect(201);
+
+    const productsResponse = await request(app.getHttpServer())
+      .get('/loan-products?includeInactive=true')
+      .set('Authorization', `Bearer ${officerToken}`)
+      .expect(200);
+
+    const firstProduct = productsResponse.body[0];
+    expect(firstProduct?.id).toBeDefined();
+
+    const createdLoan = await request(app.getHttpServer())
+      .post('/loans')
+      .set('Authorization', `Bearer ${officerToken}`)
+      .send({
+        amount: 600,
+        clientId: createdClient.body.id,
+        productId: firstProduct.id,
+        termMonths: firstProduct.termMonths,
+        interestRateAnnual: firstProduct.interestRateAnnual,
+        repaymentFrequency: firstProduct.repaymentFrequency,
+        currency: 'USD',
+      })
+      .expect(201);
+
+    expect(createdLoan.body.appliedByUserId).toBeDefined();
+    expect(createdLoan.body.loanOfficer).toBeDefined();
+
+    await request(app.getHttpServer())
+      .post(`/loans/${createdLoan.body.id}/approve`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({})
+      .expect(201);
+
+    const myNotifications = await request(app.getHttpServer())
+      .get('/notifications/my')
+      .set('Authorization', `Bearer ${officerToken}`)
+      .expect(200);
+
+    expect(Array.isArray(myNotifications.body)).toBe(true);
+    expect(
+      myNotifications.body.some(
+        (row: any) =>
+          row?.channel === 'in_app' &&
+          String(row?.message || '').toLowerCase().includes('has been approved'),
+      ),
+    ).toBe(true);
   });
 });

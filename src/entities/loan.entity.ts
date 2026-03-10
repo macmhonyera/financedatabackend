@@ -65,6 +65,15 @@ export class Loan {
   @Column({ nullable: true })
   rejectedByUserId?: string;
 
+  @Column({ nullable: true })
+  loanOfficer?: string;
+
+  @Column({ nullable: true })
+  appliedByUserId?: string;
+
+  @Column({ nullable: true })
+  appliedByName?: string;
+
   @Column({ type: 'text', nullable: true })
   rejectionReason?: string;
 

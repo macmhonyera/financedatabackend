@@ -1603,7 +1603,7 @@ export class AiRecoveryAgentService {
       .leftJoinAndSelect('action.loan', 'loan')
       .leftJoinAndSelect('action.message', 'message')
       .where('action.action_type = :actionType', { actionType: 'escalation' })
-      .orderBy('action.created_at', 'DESC')
+      .orderBy('action.createdAt', 'DESC')
       .take(safeLimit);
 
     if (user?.role !== 'admin') {
