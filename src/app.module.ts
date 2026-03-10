@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { SeedModule } from './modules/seed/seed.module';
@@ -30,10 +31,15 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { ClientAssetsModule } from './modules/client-assets/client-assets.module';
 import { BranchesModule } from './modules/branches/branches.module';
 import { SystemConfigModule } from './modules/system-config/system-config.module';
+import { BorrowerMessage } from './entities/borrower-message.entity';
+import { PaymentPromise } from './entities/payment-promise.entity';
+import { RecoveryAction } from './entities/recovery-action.entity';
+import { AiRecoveryAgentModule } from './modules/ai-recovery-agent/ai-recovery-agent.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ScheduleModule.forRoot(),
     TypeOrmModule.forRoot({
       type: 'postgres',
       host: process.env.DATABASE_HOST || 'localhost',
@@ -57,6 +63,9 @@ import { SystemConfigModule } from './modules/system-config/system-config.module
         AuditLog,
         NotificationTemplate,
         Notification,
+        BorrowerMessage,
+        PaymentPromise,
+        RecoveryAction,
       ],
       synchronize: process.env.NODE_ENV !== 'production',
       logging: false,
@@ -74,6 +83,7 @@ import { SystemConfigModule } from './modules/system-config/system-config.module
     NotificationsModule,
     BranchesModule,
     SystemConfigModule,
+    AiRecoveryAgentModule,
   ],
   providers: [RolesGuard],
 })

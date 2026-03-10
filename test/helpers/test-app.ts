@@ -2,6 +2,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
 import * as request from 'supertest';
 import { AuthModule } from '../../src/modules/auth/auth.module';
 import { UsersModule } from '../../src/modules/users/users.module';
@@ -14,6 +15,7 @@ import { CreditModule } from '../../src/modules/credit/credit.module';
 import { LoanProductsModule } from '../../src/modules/loan-products/loan-products.module';
 import { NotificationsModule } from '../../src/modules/notifications/notifications.module';
 import { CreditScoreModule } from '../../src/modules/credit-score/credit-score.module';
+import { AiRecoveryAgentModule } from '../../src/modules/ai-recovery-agent/ai-recovery-agent.module';
 import { User } from '../../src/entities/user.entity';
 import { Branch } from '../../src/entities/branch.entity';
 import { Client } from '../../src/entities/client.entity';
@@ -30,6 +32,9 @@ import { NotificationTemplate } from '../../src/entities/notification-template.e
 import { Notification } from '../../src/entities/notification.entity';
 import { CreditScoreResult } from '../../src/modules/credit-score/scoring.entity';
 import { SeedService } from '../../src/modules/seed/seed.service';
+import { BorrowerMessage } from '../../src/entities/borrower-message.entity';
+import { PaymentPromise } from '../../src/entities/payment-promise.entity';
+import { RecoveryAction } from '../../src/entities/recovery-action.entity';
 
 export const TEST_ENTITIES = [
   User,
@@ -47,6 +52,9 @@ export const TEST_ENTITIES = [
   NotificationTemplate,
   Notification,
   CreditScoreResult,
+  BorrowerMessage,
+  PaymentPromise,
+  RecoveryAction,
 ];
 
 export async function createTestingApp(): Promise<{ app: INestApplication; moduleRef: TestingModule }> {
@@ -56,6 +64,7 @@ export async function createTestingApp(): Promise<{ app: INestApplication; modul
   const moduleRef = await Test.createTestingModule({
     imports: [
       ConfigModule.forRoot({ isGlobal: true }),
+      ScheduleModule.forRoot(),
       TypeOrmModule.forRoot({
         type: 'sqlite',
         database: ':memory:',
@@ -74,6 +83,7 @@ export async function createTestingApp(): Promise<{ app: INestApplication; modul
       CreditScoreModule,
       LoanProductsModule,
       NotificationsModule,
+      AiRecoveryAgentModule,
     ],
   }).compile();
 

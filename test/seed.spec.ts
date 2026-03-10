@@ -16,6 +16,9 @@ import { NotificationTemplate } from '../src/entities/notification-template.enti
 import { Notification } from '../src/entities/notification.entity';
 import { CreditScoreResult } from '../src/modules/credit-score/scoring.entity';
 import { SeedService } from '../src/modules/seed/seed.service';
+import { BorrowerMessage } from '../src/entities/borrower-message.entity';
+import { PaymentPromise } from '../src/entities/payment-promise.entity';
+import { RecoveryAction } from '../src/entities/recovery-action.entity';
 
 describe('SeedService', () => {
   let dataSource: DataSource;
@@ -41,6 +44,9 @@ describe('SeedService', () => {
         NotificationTemplate,
         Notification,
         CreditScoreResult,
+        BorrowerMessage,
+        PaymentPromise,
+        RecoveryAction,
       ],
       synchronize: true,
     });

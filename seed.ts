@@ -16,6 +16,9 @@ import { AmlEvent } from './src/entities/aml-event.entity';
 import { AuditLog } from './src/entities/audit-log.entity';
 import { NotificationTemplate } from './src/entities/notification-template.entity';
 import { Notification } from './src/entities/notification.entity';
+import { BorrowerMessage } from './src/entities/borrower-message.entity';
+import { PaymentPromise } from './src/entities/payment-promise.entity';
+import { RecoveryAction } from './src/entities/recovery-action.entity';
 import { SeedService } from './src/modules/seed/seed.service';
 
 async function run() {
@@ -41,6 +44,9 @@ async function run() {
       AuditLog,
       NotificationTemplate,
       Notification,
+      BorrowerMessage,
+      PaymentPromise,
+      RecoveryAction,
     ],
     synchronize: true,
   });
