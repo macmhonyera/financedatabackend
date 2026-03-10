@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { Loan } from '../../entities/loan.entity';
 import { Client } from '../../entities/client.entity';
 import { ClientAsset } from '../../entities/client-asset.entity';
@@ -14,6 +14,7 @@ import { CreditService } from '../credit/credit.service';
 import { LoanProduct, RepaymentFrequency, ScheduleType } from '../../entities/loan-product.entity';
 import { LoanInstallment } from '../../entities/loan-installment.entity';
 import { NotificationsService } from '../notifications/notifications.service';
+import { Payment } from '../../entities/payment.entity';
 
 type LoanCreateInput = Partial<Loan> & {
   productId?: string;
@@ -38,6 +39,18 @@ type LoanTerms = {
   termMonths: number;
   repaymentFrequency: RepaymentFrequency;
   currency: string;
+};
+
+type OutstandingInstallmentCandidate = {
+  loan: Loan;
+  installment?: LoanInstallment;
+  outstanding: number;
+  source: 'installment' | 'loan_balance';
+};
+
+type ClientLoanGate = {
+  pendingApplications: Loan[];
+  outstandingInstallments: OutstandingInstallmentCandidate[];
 };
 
 @Injectable()
@@ -94,6 +107,227 @@ export class LoansService {
     if (repaymentFrequency === 'weekly') return 52;
     if (repaymentFrequency === 'biweekly') return 26;
     return 12;
+  }
+
+  private allocation(due: number, paid: number, remaining: number) {
+    const dueLeft = this.round2(Math.max(0, due - paid));
+    const chunk = this.round2(Math.min(dueLeft, remaining));
+    return { chunk, dueLeft };
+  }
+
+  private installmentOutstanding(row: LoanInstallment) {
+    const due =
+      Number(row.principalDue || 0) +
+      Number(row.interestDue || 0) +
+      Number(row.feeDue || 0) +
+      Number(row.penaltyDue || 0);
+    const paid =
+      Number(row.principalPaid || 0) +
+      Number(row.interestPaid || 0) +
+      Number(row.feePaid || 0) +
+      Number(row.penaltyPaid || 0);
+    return this.round2(Math.max(0, due - paid));
+  }
+
+  private async evaluateClientLoanGate(args: {
+    clientId: string;
+    excludeLoanId?: string;
+    manager?: EntityManager;
+  }): Promise<ClientLoanGate> {
+    const { clientId, excludeLoanId, manager } = args;
+    const loanRepo = manager ? manager.getRepository(Loan) : this.repo;
+
+    const qb = loanRepo
+      .createQueryBuilder('loan')
+      .leftJoinAndSelect('loan.client', 'client')
+      .leftJoinAndSelect('client.branch', 'branch')
+      .leftJoinAndSelect('loan.installments', 'installment')
+      .where('client.id = :clientId', { clientId })
+      .andWhere('loan.status IN (:...statuses)', {
+        statuses: ['pending', 'active', 'overdue', 'defaulted'],
+      })
+      .orderBy('loan.createdAt', 'ASC')
+      .addOrderBy('installment.installmentNumber', 'ASC');
+
+    if (excludeLoanId) {
+      qb.andWhere('loan.id != :excludeLoanId', { excludeLoanId });
+    }
+
+    const loans = await qb.getMany();
+    const pendingApplications = loans.filter((loan) => loan.status === 'pending');
+    const outstandingInstallments: OutstandingInstallmentCandidate[] = [];
+
+    for (const loan of loans) {
+      if (!['active', 'overdue', 'defaulted'].includes(loan.status)) continue;
+
+      const installments = Array.isArray(loan.installments) ? loan.installments : [];
+      if (installments.length === 0) {
+        const loanBalance = this.round2(Number(loan.balance || 0));
+        if (loanBalance > 0) {
+          outstandingInstallments.push({
+            loan,
+            outstanding: loanBalance,
+            source: 'loan_balance',
+          });
+        }
+        continue;
+      }
+
+      for (const installment of installments) {
+        const outstanding = this.installmentOutstanding(installment);
+        if (outstanding <= 0) continue;
+
+        outstandingInstallments.push({
+          loan,
+          installment,
+          outstanding,
+          source: 'installment',
+        });
+      }
+    }
+
+    outstandingInstallments.sort((a, b) => {
+      const leftDate = a.installment?.dueDate || '9999-12-31';
+      const rightDate = b.installment?.dueDate || '9999-12-31';
+      if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+
+      const leftNumber = Number(a.installment?.installmentNumber || 999999);
+      const rightNumber = Number(b.installment?.installmentNumber || 999999);
+      if (leftNumber !== rightNumber) return leftNumber - rightNumber;
+
+      return String(a.loan.id || '').localeCompare(String(b.loan.id || ''));
+    });
+
+    return {
+      pendingApplications,
+      outstandingInstallments,
+    };
+  }
+
+  private async settleRolloverInstallment(args: {
+    manager: EntityManager;
+    newLoan: Loan;
+    candidate: OutstandingInstallmentCandidate;
+    actor?: any;
+  }) {
+    const { manager, newLoan, candidate, actor } = args;
+    if (candidate.source !== 'installment' || !candidate.installment) {
+      throw new BadRequestException(
+        'Cannot process rollover deduction because existing loan schedule is incomplete',
+      );
+    }
+
+    const loanRepo = manager.getRepository(Loan);
+    const installmentRepo = manager.getRepository(LoanInstallment);
+    const paymentRepo = manager.getRepository(Payment);
+
+    const priorLoan = await loanRepo.findOne({
+      where: { id: candidate.loan.id },
+      relations: ['client', 'client.branch', 'installments'],
+    });
+    if (!priorLoan) {
+      throw new BadRequestException('Rollover source loan was not found');
+    }
+    if (!['active', 'overdue', 'defaulted'].includes(priorLoan.status)) {
+      return { deductedAmount: 0, settledLoanId: priorLoan.id };
+    }
+
+    const installmentRows = [...(priorLoan.installments || [])].sort(
+      (a, b) => Number(a.installmentNumber || 0) - Number(b.installmentNumber || 0),
+    );
+
+    const targetInstallment = installmentRows.find((row) => row.id === candidate.installment?.id);
+    if (!targetInstallment) {
+      throw new BadRequestException('Rollover source installment was not found');
+    }
+
+    const targetOutstanding = this.installmentOutstanding(targetInstallment);
+    const maxLoanBalance = this.round2(Number(priorLoan.balance || 0));
+    const deductionAmount = this.round2(Math.min(targetOutstanding, maxLoanBalance));
+    if (deductionAmount <= 0) {
+      return { deductedAmount: 0, settledLoanId: priorLoan.id };
+    }
+
+    const branchId = ((priorLoan.client as any)?.branch as any)?.id;
+    const payment = paymentRepo.create({
+      amount: deductionAmount,
+      loan: { id: priorLoan.id } as any,
+      client: (priorLoan.client as any)?.id ? ({ id: (priorLoan.client as any).id } as any) : undefined,
+      branch: branchId || undefined,
+      channel: 'other',
+      reconciliationStatus: 'reconciled',
+      reconciledAt: new Date(),
+      externalReference: `ROLLOVER-${newLoan.id.slice(0, 8).toUpperCase()}-${Date.now()}`,
+      metadata: {
+        type: 'rollover_settlement',
+        sourceLoanId: newLoan.id,
+        sourceInstallmentId: targetInstallment.id,
+        createdByUserId: actor?.id || null,
+      },
+    } as any);
+    await paymentRepo.save(payment as any);
+
+    let remaining = deductionAmount;
+    for (const row of installmentRows) {
+      if (remaining <= 0) break;
+
+      let step = this.allocation(Number(row.penaltyDue || 0), Number(row.penaltyPaid || 0), remaining);
+      row.penaltyPaid = this.round2(Number(row.penaltyPaid || 0) + step.chunk) as any;
+      remaining = this.round2(remaining - step.chunk);
+
+      if (remaining > 0) {
+        step = this.allocation(Number(row.feeDue || 0), Number(row.feePaid || 0), remaining);
+        row.feePaid = this.round2(Number(row.feePaid || 0) + step.chunk) as any;
+        remaining = this.round2(remaining - step.chunk);
+      }
+
+      if (remaining > 0) {
+        step = this.allocation(Number(row.interestDue || 0), Number(row.interestPaid || 0), remaining);
+        row.interestPaid = this.round2(Number(row.interestPaid || 0) + step.chunk) as any;
+        remaining = this.round2(remaining - step.chunk);
+      }
+
+      if (remaining > 0) {
+        step = this.allocation(Number(row.principalDue || 0), Number(row.principalPaid || 0), remaining);
+        row.principalPaid = this.round2(Number(row.principalPaid || 0) + step.chunk) as any;
+        remaining = this.round2(remaining - step.chunk);
+      }
+
+      const rowOutstanding = this.installmentOutstanding(row);
+      if (rowOutstanding <= 0) {
+        row.status = 'paid';
+        row.paidAt = new Date();
+      } else if (rowOutstanding < Number(row.totalDue || 0)) {
+        row.status = 'partial';
+      } else {
+        row.status = 'pending';
+      }
+    }
+
+    await installmentRepo.save(installmentRows as any);
+
+    const appliedAmount = this.round2(deductionAmount - remaining);
+    const now = new Date();
+    const hasOverdue = installmentRows.some(
+      (row) => this.installmentOutstanding(row) > 0 && new Date(`${row.dueDate}T23:59:59.999Z`) < now,
+    );
+    const nextBalance = this.round2(Math.max(0, Number(priorLoan.balance || 0) - appliedAmount));
+
+    priorLoan.balance = nextBalance as any;
+    if (nextBalance <= 0) {
+      priorLoan.status = 'completed';
+    } else if (hasOverdue) {
+      priorLoan.status = 'overdue';
+    } else {
+      priorLoan.status = 'active';
+    }
+    await loanRepo.save(priorLoan);
+
+    return {
+      deductedAmount: appliedAmount,
+      settledLoanId: priorLoan.id,
+      settledInstallmentId: targetInstallment.id,
+    };
   }
 
   private normalizeTerms(input: {
@@ -181,6 +415,9 @@ export class LoansService {
 
     let outstanding = Number(principal);
     let periodicPayment = 0;
+    const flatTotalInterest = this.round2((principal * Number(interestRateAnnual || 0)) / 100);
+    const flatInterestPerPeriodBase = periods > 0 ? this.round2(flatTotalInterest / periods) : 0;
+    let flatInterestAllocated = 0;
 
     if (scheduleType === 'reducing') {
       if (rate <= 0) {
@@ -199,10 +436,14 @@ export class LoansService {
 
       if (scheduleType === 'flat') {
         principalDue = principal / periods;
-        interestDue = principal * rate;
+        interestDue =
+          i === periods
+            ? this.round2(Math.max(0, flatTotalInterest - flatInterestAllocated))
+            : flatInterestPerPeriodBase;
         if (i === periods) {
           principalDue = outstanding;
         }
+        flatInterestAllocated = this.round2(flatInterestAllocated + interestDue);
       } else {
         interestDue = outstanding * rate;
         principalDue = rate <= 0 ? principal / periods : periodicPayment - interestDue;
@@ -381,6 +622,21 @@ export class LoansService {
     const clientBranchId = ((client as any).branch as any)?.id || (client as any).branchId;
     if (user?.role !== 'admin' && user?.branch && clientBranchId && clientBranchId !== user.branch) {
       throw new ForbiddenException('You are not allowed to create a loan for this client');
+    }
+
+    const gate = await this.evaluateClientLoanGate({ clientId });
+    if (gate.pendingApplications.length > 0) {
+      throw new BadRequestException('Client already has a pending loan application');
+    }
+    if (gate.outstandingInstallments.some((row) => row.source === 'loan_balance')) {
+      throw new BadRequestException(
+        'Client has an active loan with incomplete repayment schedule; resolve it before creating a new loan',
+      );
+    }
+    if (gate.outstandingInstallments.length > 1) {
+      throw new BadRequestException(
+        'This client still has several payments left on an existing loan. They can apply for a new loan once only one payment is left.',
+      );
     }
 
     const productId = data.productId || (data.product as any)?.id;
@@ -759,6 +1015,31 @@ export class LoansService {
         const amount = Number(loan.amount || 0);
         if (amount <= 0) {
           throw new BadRequestException('Loan amount is invalid and cannot be approved');
+        }
+
+        const repaymentGate = await this.evaluateClientLoanGate({
+          clientId: (loan.client as any)?.id,
+          excludeLoanId: loan.id,
+          manager,
+        });
+        if (repaymentGate.outstandingInstallments.some((row) => row.source === 'loan_balance')) {
+          throw new BadRequestException(
+            'Client has an active loan with incomplete repayment schedule; cannot approve this loan',
+          );
+        }
+        if (repaymentGate.outstandingInstallments.length > 1) {
+          throw new BadRequestException(
+            'This client still has several payments left on an existing loan. Approve a new loan only when one payment is left.',
+          );
+        }
+
+        if (repaymentGate.outstandingInstallments.length === 1) {
+          await this.settleRolloverInstallment({
+            manager,
+            newLoan: loan,
+            candidate: repaymentGate.outstandingInstallments[0],
+            actor: user,
+          });
         }
 
         const terms = this.normalizeTerms({

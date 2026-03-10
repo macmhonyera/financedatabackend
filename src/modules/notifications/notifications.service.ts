@@ -1,22 +1,202 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
+import { Observable, Subject } from 'rxjs';
 import { Notification } from '../../entities/notification.entity';
 import { NotificationTemplate } from '../../entities/notification-template.entity';
+import { User } from '../../entities/user.entity';
+import { Client } from '../../entities/client.entity';
 import { MailService } from '../mail/mail.service';
 import { SmsService } from '../sms/sms.service';
 import { CreateNotificationTemplateDto } from './dto/create-notification-template.dto';
 import { UpdateNotificationTemplateDto } from './dto/update-notification-template.dto';
 import { EnqueueNotificationDto } from './dto/enqueue-notification.dto';
+import { MessageEvent, UnauthorizedException } from '@nestjs/common';
 
 @Injectable()
 export class NotificationsService {
+  private readonly streamSubjectsByUser = new Map<string, Set<Subject<MessageEvent>>>();
+
   constructor(
     @InjectRepository(Notification) private repo: Repository<Notification>,
     @InjectRepository(NotificationTemplate) private templateRepo: Repository<NotificationTemplate>,
+    @InjectRepository(User) private userRepo: Repository<User>,
+    @InjectRepository(Client) private clientRepo: Repository<Client>,
     private mail: MailService,
     private sms: SmsService,
+    private jwt: JwtService,
   ) {}
+
+  private async attachRecipientNames(rows: Notification[]) {
+    if (!Array.isArray(rows) || rows.length === 0) return rows;
+
+    const recipientIds = Array.from(
+      new Set(
+        rows
+          .map((row) => String(row?.recipientId || '').trim())
+          .filter((value) => value.length > 0),
+      ),
+    );
+
+    const [users, clients] =
+      recipientIds.length > 0
+        ? await Promise.all([
+            this.userRepo.find({
+              where: { id: In(recipientIds) } as any,
+              select: ['id', 'name'],
+            }),
+            this.clientRepo.find({
+              where: { id: In(recipientIds) } as any,
+              select: ['id', 'name'],
+            }),
+          ])
+        : [[], []];
+
+    const userNameById = new Map(users.map((user) => [String(user.id), String(user.name || '').trim()]));
+    const clientNameById = new Map(clients.map((client) => [String(client.id), String(client.name || '').trim()]));
+
+    return rows.map((row) => {
+      const payload = row.payload && typeof row.payload === 'object' ? row.payload : {};
+      const payloadNames = [
+        payload?.recipientName,
+        payload?.clientName,
+        payload?.borrowerName,
+        payload?.userName,
+      ]
+        .map((value) => String(value || '').trim())
+        .filter((value) => value.length > 0);
+
+      const recipientId = String(row?.recipientId || '').trim();
+      const recipientName =
+        payloadNames[0] ||
+        userNameById.get(recipientId) ||
+        clientNameById.get(recipientId) ||
+        undefined;
+
+      return {
+        ...(row as any),
+        recipientName,
+      };
+    });
+  }
+
+  private getOrCreateStreamSubjects(userId: string) {
+    const existing = this.streamSubjectsByUser.get(userId);
+    if (existing) return existing;
+
+    const created = new Set<Subject<MessageEvent>>();
+    this.streamSubjectsByUser.set(userId, created);
+    return created;
+  }
+
+  private broadcastToUser(userId: string, payload: Record<string, any>) {
+    if (!userId) return;
+    const streams = this.streamSubjectsByUser.get(userId);
+    if (!streams || streams.size === 0) return;
+
+    const event: MessageEvent = {
+      type: 'notification',
+      data: {
+        ...payload,
+        at: new Date().toISOString(),
+      },
+    };
+
+    for (const subject of streams) {
+      subject.next(event);
+    }
+  }
+
+  private async emitUnreadCount(userId?: string) {
+    const recipientId = String(userId || '').trim();
+    if (!recipientId) return;
+
+    const unread = await this.repo.count({
+      where: {
+        recipientId,
+        channel: 'in_app',
+        isRead: false,
+      } as any,
+    });
+
+    this.broadcastToUser(recipientId, {
+      type: 'unread_count',
+      unread,
+    });
+  }
+
+  resolveStreamUser(req: any, queryToken?: string) {
+    const authHeader = String(req?.headers?.authorization || '').trim();
+    const headerToken =
+      authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
+    const token = String(queryToken || headerToken || '').trim();
+
+    if (!token) {
+      throw new UnauthorizedException('Missing stream token');
+    }
+
+    try {
+      const payload = this.jwt.verify(token) as any;
+      if (!payload?.sub) {
+        throw new UnauthorizedException('Invalid stream token payload');
+      }
+
+      return {
+        id: String(payload.sub),
+        email: payload.email,
+        role: payload.role,
+        branch: payload.branch,
+      };
+    } catch (_err) {
+      throw new UnauthorizedException('Invalid stream token');
+    }
+  }
+
+  subscribeToMyNotificationStream(userId: string): Observable<MessageEvent> {
+    const recipientId = String(userId || '').trim();
+    if (!recipientId) {
+      throw new UnauthorizedException('Invalid stream user');
+    }
+
+    return new Observable<MessageEvent>((subscriber) => {
+      const subject = new Subject<MessageEvent>();
+      const subjects = this.getOrCreateStreamSubjects(recipientId);
+      subjects.add(subject);
+
+      const subscription = subject.subscribe(subscriber);
+      const heartbeatInterval = setInterval(() => {
+        subject.next({
+          type: 'heartbeat',
+          data: {
+            type: 'heartbeat',
+            at: new Date().toISOString(),
+          },
+        });
+      }, 25000);
+
+      subject.next({
+        type: 'connected',
+        data: {
+          type: 'connected',
+          at: new Date().toISOString(),
+        },
+      });
+
+      this.emitUnreadCount(recipientId).catch(() => undefined);
+
+      return () => {
+        clearInterval(heartbeatInterval);
+        subscription.unsubscribe();
+        subjects.delete(subject);
+        subject.complete();
+
+        if (subjects.size === 0) {
+          this.streamSubjectsByUser.delete(recipientId);
+        }
+      };
+    });
+  }
 
   private render(template: string, payload?: Record<string, any>) {
     if (!template) return template;
@@ -81,10 +261,21 @@ export class NotificationsService {
       maxAttempts: Number(dto.maxAttempts || 3),
     } as any);
 
-    return this.repo.save(entity);
+    const savedResult = await this.repo.save(entity as any);
+    const saved = Array.isArray(savedResult) ? savedResult[0] : savedResult;
+
+    if (saved.channel === 'in_app' && saved.recipientId) {
+      this.broadcastToUser(saved.recipientId, {
+        type: 'notification',
+        notificationId: saved.id,
+      });
+      this.emitUnreadCount(saved.recipientId).catch(() => undefined);
+    }
+
+    return (await this.attachRecipientNames([saved]))[0];
   }
 
-  listNotifications(filters: { status?: string; recipientId?: string; channel?: string }) {
+  async listNotifications(filters: { status?: string; recipientId?: string; channel?: string }) {
     const qb = this.repo
       .createQueryBuilder('n')
       .leftJoinAndSelect('n.template', 'template')
@@ -94,17 +285,19 @@ export class NotificationsService {
     if (filters.recipientId) qb.andWhere('n.recipientId = :recipientId', { recipientId: filters.recipientId });
     if (filters.channel) qb.andWhere('n.channel = :channel', { channel: filters.channel });
 
-    return qb.getMany();
+    const rows = await qb.getMany();
+    return this.attachRecipientNames(rows);
   }
 
-  getMyInApp(user: any) {
-    return this.repo.find({
+  async getMyInApp(user: any) {
+    const rows = await this.repo.find({
       where: {
         recipientId: user?.id,
         channel: 'in_app',
       } as any,
       order: { createdAt: 'DESC' },
     });
+    return this.attachRecipientNames(rows);
   }
 
   async getMyInAppUnreadCount(user: any) {
@@ -139,7 +332,9 @@ export class NotificationsService {
       await this.repo.save(notification);
     }
 
-    return notification;
+    this.emitUnreadCount(String(user?.id || '')).catch(() => undefined);
+
+    return (await this.attachRecipientNames([notification]))[0];
   }
 
   async markAllMyInAppRead(user: any) {
@@ -154,6 +349,8 @@ export class NotificationsService {
       .andWhere('channel = :channel', { channel: 'in_app' })
       .andWhere('(isRead = false OR isRead IS NULL)')
       .execute();
+
+    this.emitUnreadCount(String(user?.id || '')).catch(() => undefined);
 
     return { updated: Number(result.affected || 0) };
   }

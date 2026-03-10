@@ -138,6 +138,209 @@ describe('Integration: loan + repayment + credit score flow', () => {
     expect(history.body[0].clientId).toBe(clientId);
   });
 
+  it('calculates flat total repayable as principal plus configured interest', async () => {
+    const createdClient = await request(app.getHttpServer())
+      .post('/clients')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Flat Interest Client',
+        phone: '+1555000133',
+        branchId: 'BR001',
+      })
+      .expect(201);
+
+    const flatProduct = await request(app.getHttpServer())
+      .post('/loan-products')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        code: `FLAT-18-${Date.now()}`,
+        name: 'Flat 18 Product',
+        currency: 'USD',
+        minAmount: 100,
+        maxAmount: 10000,
+        termMonths: 12,
+        repaymentFrequency: 'monthly',
+        interestRateAnnual: 18,
+        processingFeeRate: 0,
+        lateFeeRate: 0,
+        gracePeriodDays: 0,
+        scheduleType: 'flat',
+        isActive: true,
+      })
+      .expect(201);
+
+    const createdLoan = await request(app.getHttpServer())
+      .post('/loans')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        amount: 2000,
+        clientId: createdClient.body.id,
+        productId: flatProduct.body.id,
+        termMonths: 12,
+        interestRateAnnual: 18,
+        repaymentFrequency: 'monthly',
+        currency: 'USD',
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/loans/${createdLoan.body.id}/approve`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({})
+      .expect(201);
+
+    const schedule = await request(app.getHttpServer())
+      .get(`/loans/${createdLoan.body.id}/schedule`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+
+    const totalRepayable = (Array.isArray(schedule.body) ? schedule.body : []).reduce(
+      (sum: number, row: any) => sum + Number(row?.totalDue || 0),
+      0,
+    );
+
+    expect(totalRepayable).toBeCloseTo(2360, 2);
+  });
+
+  it('enforces one-installment rollover rule and deducts last installment on approval', async () => {
+    const round2 = (value: number) => Number((Math.round(value * 100) / 100).toFixed(2));
+
+    const createdClient = await request(app.getHttpServer())
+      .post('/clients')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Rollover Rule Client',
+        phone: '+1555000122',
+        branchId: 'BR001',
+      })
+      .expect(201);
+
+    const rolloverProduct = await request(app.getHttpServer())
+      .post('/loan-products')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        code: `ROLLOVER-${Date.now()}`,
+        name: 'Rollover Control Product',
+        currency: 'USD',
+        minAmount: 100,
+        maxAmount: 10000,
+        termMonths: 3,
+        repaymentFrequency: 'monthly',
+        interestRateAnnual: 0,
+        processingFeeRate: 0,
+        lateFeeRate: 0,
+        gracePeriodDays: 0,
+        scheduleType: 'flat',
+        isActive: true,
+      })
+      .expect(201);
+
+    const firstLoan = await request(app.getHttpServer())
+      .post('/loans')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        amount: 1000,
+        clientId: createdClient.body.id,
+        productId: rolloverProduct.body.id,
+        termMonths: rolloverProduct.body.termMonths,
+        interestRateAnnual: rolloverProduct.body.interestRateAnnual,
+        repaymentFrequency: rolloverProduct.body.repaymentFrequency,
+        currency: 'USD',
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/loans/${firstLoan.body.id}/approve`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({})
+      .expect(201);
+
+    const scheduleResponse = await request(app.getHttpServer())
+      .get(`/loans/${firstLoan.body.id}/schedule`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+
+    const scheduleRows = (Array.isArray(scheduleResponse.body) ? scheduleResponse.body : []).sort(
+      (a: any, b: any) => Number(a.installmentNumber || 0) - Number(b.installmentNumber || 0),
+    );
+    expect(scheduleRows.length).toBeGreaterThan(1);
+
+    await request(app.getHttpServer())
+      .post('/loans')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        amount: 900,
+        clientId: createdClient.body.id,
+        productId: rolloverProduct.body.id,
+        termMonths: rolloverProduct.body.termMonths,
+        interestRateAnnual: rolloverProduct.body.interestRateAnnual,
+        repaymentFrequency: rolloverProduct.body.repaymentFrequency,
+        currency: 'USD',
+      })
+      .expect(400);
+
+    const amountToSettleBeforeLastInstallment = round2(
+      scheduleRows
+        .slice(0, -1)
+        .reduce((sum: number, row: any) => sum + Number(row?.totalDue || 0), 0),
+    );
+
+    expect(amountToSettleBeforeLastInstallment).toBeGreaterThan(0);
+
+    await request(app.getHttpServer())
+      .post('/payments')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        amount: amountToSettleBeforeLastInstallment,
+        loanId: firstLoan.body.id,
+        clientId: createdClient.body.id,
+        channel: 'cash',
+        branch: 'BR001',
+        externalReference: `ROLLOVER-PREPAY-${Date.now()}`,
+        idempotencyKey: `ROLLOVER-PREPAY-IDEMPOTENCY-${Date.now()}`,
+      })
+      .expect(201);
+
+    const secondLoan = await request(app.getHttpServer())
+      .post('/loans')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        amount: 900,
+        clientId: createdClient.body.id,
+        productId: rolloverProduct.body.id,
+        termMonths: rolloverProduct.body.termMonths,
+        interestRateAnnual: rolloverProduct.body.interestRateAnnual,
+        repaymentFrequency: rolloverProduct.body.repaymentFrequency,
+        currency: 'USD',
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/loans/${secondLoan.body.id}/approve`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({})
+      .expect(201);
+
+    const firstLoanAfterRollover = await request(app.getHttpServer())
+      .get(`/loans/${firstLoan.body.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect(firstLoanAfterRollover.body.status).toBe('completed');
+    expect(Number(firstLoanAfterRollover.body.balance || 0)).toBeLessThanOrEqual(0.01);
+
+    const paymentsAfterRollover = await request(app.getHttpServer())
+      .get(`/payments?loanId=${encodeURIComponent(firstLoan.body.id)}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect(
+      paymentsAfterRollover.body.some(
+        (payment: any) => payment?.metadata?.type === 'rollover_settlement',
+      ),
+    ).toBe(true);
+  });
+
   it('notifies applying loan officer when admin changes loan status', async () => {
     const createdClient = await request(app.getHttpServer())
       .post('/clients')
