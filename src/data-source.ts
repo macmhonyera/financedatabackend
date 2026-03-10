@@ -16,6 +16,9 @@ import { AmlEvent } from './entities/aml-event.entity';
 import { AuditLog } from './entities/audit-log.entity';
 import { NotificationTemplate } from './entities/notification-template.entity';
 import { Notification } from './entities/notification.entity';
+import { BorrowerMessage } from './entities/borrower-message.entity';
+import { PaymentPromise } from './entities/payment-promise.entity';
+import { RecoveryAction } from './entities/recovery-action.entity';
 
 const AppDataSource = new DataSource({
   type: 'postgres',
@@ -40,6 +43,9 @@ const AppDataSource = new DataSource({
     AuditLog,
     NotificationTemplate,
     Notification,
+    BorrowerMessage,
+    PaymentPromise,
+    RecoveryAction,
   ],
   migrations: [`${__dirname}/migrations/*{.ts,.js}`],
 });

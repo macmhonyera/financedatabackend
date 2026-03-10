@@ -16,6 +16,9 @@ import { AuditLog } from '../../entities/audit-log.entity';
 import { NotificationTemplate } from '../../entities/notification-template.entity';
 import { Notification } from '../../entities/notification.entity';
 import { CreditScoreResult } from '../credit-score/scoring.entity';
+import { BorrowerMessage } from '../../entities/borrower-message.entity';
+import { PaymentPromise } from '../../entities/payment-promise.entity';
+import { RecoveryAction } from '../../entities/recovery-action.entity';
 
 @Injectable()
 export class SeedService {
@@ -37,6 +40,9 @@ export class SeedService {
     const repoNotificationTemplate = this.dataSource.getRepository(NotificationTemplate);
     const repoNotification = this.dataSource.getRepository(Notification);
     const repoCreditScore = this.dataSource.getRepository(CreditScoreResult);
+    const repoBorrowerMessage = this.dataSource.getRepository(BorrowerMessage);
+    const repoPaymentPromise = this.dataSource.getRepository(PaymentPromise);
+    const repoRecoveryAction = this.dataSource.getRepository(RecoveryAction);
 
     // Clear database (supports both Postgres and sqlite tests)
     const dbType = (this.dataSource.options as any)?.type;
@@ -44,6 +50,9 @@ export class SeedService {
       const candidates = [
         'notification',
         'notification_template',
+        'recovery_actions',
+        'payment_promises',
+        'borrower_messages',
         'audit_log',
         'aml_event',
         'complaint',
@@ -75,6 +84,9 @@ export class SeedService {
     } else {
       await repoNotification.clear();
       await repoNotificationTemplate.clear();
+      await repoRecoveryAction.clear();
+      await repoPaymentPromise.clear();
+      await repoBorrowerMessage.clear();
       await repoAudit.clear();
       await repoAml.clear();
       await repoComplaint.clear();

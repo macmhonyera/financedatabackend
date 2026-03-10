@@ -17,6 +17,9 @@ import { AmlEvent } from '../../src/entities/aml-event.entity';
 import { AuditLog } from '../../src/entities/audit-log.entity';
 import { NotificationTemplate } from '../../src/entities/notification-template.entity';
 import { Notification } from '../../src/entities/notification.entity';
+import { BorrowerMessage } from '../../src/entities/borrower-message.entity';
+import { PaymentPromise } from '../../src/entities/payment-promise.entity';
+import { RecoveryAction } from '../../src/entities/recovery-action.entity';
 
 describe('E2E App', () => {
   let app: INestApplication;
@@ -43,6 +46,9 @@ describe('E2E App', () => {
             AuditLog,
             NotificationTemplate,
             Notification,
+            BorrowerMessage,
+            PaymentPromise,
+            RecoveryAction,
           ],
           synchronize: true,
         }),

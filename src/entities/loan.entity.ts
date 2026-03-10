@@ -11,6 +11,9 @@ import { Client } from './client.entity';
 import { Payment } from './payment.entity';
 import { LoanProduct, RepaymentFrequency } from './loan-product.entity';
 import { LoanInstallment } from './loan-installment.entity';
+import { BorrowerMessage } from './borrower-message.entity';
+import { PaymentPromise } from './payment-promise.entity';
+import { RecoveryAction } from './recovery-action.entity';
 
 @Entity()
 export class Loan {
@@ -79,6 +82,15 @@ export class Loan {
 
   @OneToMany(() => LoanInstallment, (i) => i.loan)
   installments: LoanInstallment[];
+
+  @OneToMany(() => BorrowerMessage, (message) => message.loan)
+  borrowerMessages: BorrowerMessage[];
+
+  @OneToMany(() => PaymentPromise, (promise) => promise.loan)
+  paymentPromises: PaymentPromise[];
+
+  @OneToMany(() => RecoveryAction, (action) => action.loan)
+  recoveryActions: RecoveryAction[];
 
   @CreateDateColumn()
   createdAt: Date;

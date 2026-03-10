@@ -10,6 +10,9 @@ import {
 import { Branch } from './branch.entity';
 import { Loan } from './loan.entity';
 import { ClientAsset } from './client-asset.entity';
+import { BorrowerMessage } from './borrower-message.entity';
+import { PaymentPromise } from './payment-promise.entity';
+import { RecoveryAction } from './recovery-action.entity';
 
 @Entity()
 export class Client {
@@ -63,6 +66,15 @@ export class Client {
 
   @OneToMany(() => ClientAsset, (asset) => asset.client)
   assets: ClientAsset[];
+
+  @OneToMany(() => BorrowerMessage, (message) => message.borrower)
+  borrowerMessages: BorrowerMessage[];
+
+  @OneToMany(() => PaymentPromise, (promise) => promise.borrower)
+  paymentPromises: PaymentPromise[];
+
+  @OneToMany(() => RecoveryAction, (action) => action.borrower)
+  recoveryActions: RecoveryAction[];
 
   @CreateDateColumn()
   createdAt: Date;
