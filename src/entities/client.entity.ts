@@ -14,6 +14,28 @@ import { BorrowerMessage } from './borrower-message.entity';
 import { PaymentPromise } from './payment-promise.entity';
 import { RecoveryAction } from './recovery-action.entity';
 
+export type ClientDocumentType =
+  | 'national_id'
+  | 'shop_license'
+  | 'car_registration'
+  | 'title_deed'
+  | 'other';
+
+export type ClientDocumentRecord = {
+  id: string;
+  documentType: ClientDocumentType;
+  documentName: string;
+  mimeType: string;
+  sizeBytes: number;
+  dataUrl: string;
+  documentNumber?: string;
+  expiryDate?: string;
+  notes?: string;
+  uploadedAt: string;
+  uploadedByUserId?: string;
+  uploadedByName?: string;
+};
+
 @Entity()
 export class Client {
   @PrimaryGeneratedColumn('uuid')
@@ -33,6 +55,9 @@ export class Client {
 
   @Column({ nullable: true })
   avatar?: string;
+
+  @Column({ type: 'simple-json', nullable: true, select: false })
+  documents?: ClientDocumentRecord[];
 
   @Column({ type: 'int', nullable: true })
   creditScore?: number;

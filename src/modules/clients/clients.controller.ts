@@ -1,10 +1,12 @@
-import { Controller, Get, Post, Body, Param, Put, UseGuards, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
 import { ClientsService } from './clients.service';
 import { AuthGuard } from '@nestjs/passport';
 import { CreateClientDto } from './dto/create-client.dto';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
 import { Roles } from '../../common/roles.decorator';
 import { RolesGuard } from '../../common/roles.guard';
+import { UploadClientDocumentDto } from './dto/upload-client-document.dto';
+import { UploadClientProfilePhotoDto } from './dto/upload-client-profile-photo.dto';
 
 @ApiTags('clients')
 @ApiBearerAuth()
@@ -19,6 +21,14 @@ export class ClientsController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   list(@Req() req: any) {
     return this.svc.findAllScoped(req.user);
+  }
+
+  @Get(':id/documents')
+  @ApiOperation({ summary: 'List uploaded client documents' })
+  @ApiResponse({ status: 200, description: 'Client document list' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  documents(@Req() req: any, @Param('id') id: string) {
+    return this.svc.listDocumentsScoped(id, req.user);
   }
 
   @Get(':id')
@@ -63,6 +73,36 @@ export class ClientsController {
 
   @UseGuards(RolesGuard)
   @Roles('admin', 'manager', 'loan_officer')
+  @Post(':id/profile-photo')
+  @ApiOperation({ summary: 'Upload/update client profile photo' })
+  @ApiResponse({ status: 201, description: 'Profile photo uploaded' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  uploadProfilePhoto(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: UploadClientProfilePhotoDto,
+  ) {
+    return this.svc.updateProfilePhotoScoped(id, body.dataUrl, req.user);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('admin', 'manager', 'loan_officer')
+  @Post(':id/documents')
+  @ApiOperation({ summary: 'Upload a client document' })
+  @ApiResponse({ status: 201, description: 'Document uploaded' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  uploadDocument(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: UploadClientDocumentDto,
+  ) {
+    return this.svc.uploadDocumentScoped(id, body, req.user);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('admin', 'manager', 'loan_officer')
   @Put(':id')
   @ApiOperation({ summary: 'Update a client (admin/manager/loan_officer)' })
   @ApiResponse({ status: 200, description: 'Client updated' })
@@ -75,5 +115,16 @@ export class ClientsController {
       delete payload.branchId;
     }
     return this.svc.updateScoped(id, payload as any, req.user);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('admin', 'manager', 'loan_officer')
+  @Delete(':id/documents/:documentId')
+  @ApiOperation({ summary: 'Delete a client document' })
+  @ApiResponse({ status: 200, description: 'Document deleted' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  deleteDocument(@Req() req: any, @Param('id') id: string, @Param('documentId') documentId: string) {
+    return this.svc.deleteDocumentScoped(id, documentId, req.user);
   }
 }
