@@ -11,6 +11,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { RolesGuard } from './common/roles.guard';
 import { User } from './entities/user.entity';
 import { Branch } from './entities/branch.entity';
+import { Organization } from './entities/organization.entity';
 import { Client } from './entities/client.entity';
 import { ClientAsset } from './entities/client-asset.entity';
 import { Loan } from './entities/loan.entity';
@@ -36,20 +37,37 @@ import { PaymentPromise } from './entities/payment-promise.entity';
 import { RecoveryAction } from './entities/recovery-action.entity';
 import { AiRecoveryAgentModule } from './modules/ai-recovery-agent/ai-recovery-agent.module';
 
+function parseBoolean(value: string | undefined) {
+  if (value === undefined) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return undefined;
+}
+
+const databaseHost = process.env.DATABASE_HOST || 'localhost';
+const databaseUrl = process.env.DATABASE_URL || undefined;
+const hasSupabaseHost = databaseHost.includes('supabase.co') || (databaseUrl || '').includes('supabase.co');
+const hasSslInUrl = (databaseUrl || '').includes('sslmode=require');
+const useSsl = parseBoolean(process.env.DATABASE_SSL) ?? (hasSupabaseHost || hasSslInUrl);
+
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ScheduleModule.forRoot(),
     TypeOrmModule.forRoot({
       type: 'postgres',
-      host: process.env.DATABASE_HOST || 'localhost',
-      port: Number(process.env.DATABASE_PORT) || 5432,
-      username: process.env.DATABASE_USER || 'postgres',
-      password: process.env.DATABASE_PASSWORD || 'password',
-      database: process.env.DATABASE_NAME || 'finance_dev',
+      url: databaseUrl,
+      host: databaseUrl ? undefined : databaseHost,
+      port: databaseUrl ? undefined : Number(process.env.DATABASE_PORT) || 5432,
+      username: databaseUrl ? undefined : process.env.DATABASE_USER || 'postgres',
+      password: databaseUrl ? undefined : process.env.DATABASE_PASSWORD || 'password',
+      database: databaseUrl ? undefined : process.env.DATABASE_NAME || 'finance_dev',
+      ssl: useSsl ? { rejectUnauthorized: false } : false,
       entities: [
         User,
         Branch,
+        Organization,
         Client,
         ClientAsset,
         Loan,

@@ -5,6 +5,7 @@ import * as request from 'supertest';
 import { AppModule } from '../../src/app.module';
 import { User } from '../../src/entities/user.entity';
 import { Branch } from '../../src/entities/branch.entity';
+import { Organization } from '../../src/entities/organization.entity';
 import { Client } from '../../src/entities/client.entity';
 import { ClientAsset } from '../../src/entities/client-asset.entity';
 import { Loan } from '../../src/entities/loan.entity';
@@ -34,6 +35,7 @@ describe('E2E App', () => {
           entities: [
             User,
             Branch,
+            Organization,
             Client,
             ClientAsset,
             Loan,

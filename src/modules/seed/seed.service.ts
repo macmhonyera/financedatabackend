@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { Branch } from '../../entities/branch.entity';
+import { Organization } from '../../entities/organization.entity';
 import { User } from '../../entities/user.entity';
 import { Client } from '../../entities/client.entity';
 import { ClientAsset } from '../../entities/client-asset.entity';
@@ -41,6 +42,7 @@ export class SeedService {
 
   async run() {
     const repoBranch = this.dataSource.getRepository(Branch);
+    const repoOrganization = this.dataSource.getRepository(Organization);
     const repoUser = this.dataSource.getRepository(User);
     const repoClient = this.dataSource.getRepository(Client);
     const repoClientAsset = this.dataSource.getRepository(ClientAsset);
@@ -80,6 +82,7 @@ export class SeedService {
         'loan_product',
         'client',
         'user',
+        'organization',
         'branch',
       ];
 
@@ -114,8 +117,20 @@ export class SeedService {
       await repoLoanProduct.clear();
       await repoClient.clear();
       await repoUser.clear();
+      await repoOrganization.clear();
       await repoBranch.clear();
     }
+
+    // ----------------------------
+    // Organization
+    // ----------------------------
+    const org = await repoOrganization.save(
+      repoOrganization.create({
+        name: 'MicroFinance Pro',
+        primaryColor: '30 58 138',
+        accentColor: '20 184 166',
+      }),
+    );
 
     // ----------------------------
     // Branches
@@ -192,6 +207,7 @@ export class SeedService {
         name: 'Admin',
         passwordHash: hash('admin123'),
         role: 'admin',
+        organization: org,
       },
       {
         email: 'manager@harare.com',
@@ -199,6 +215,7 @@ export class SeedService {
         passwordHash: hash('manager123'),
         role: 'manager',
         branch: br1,
+        organization: org,
       },
       {
         email: 'manager@bulawayo.com',
@@ -206,6 +223,7 @@ export class SeedService {
         passwordHash: hash('manager123'),
         role: 'manager',
         branch: br2,
+        organization: org,
       },
       {
         email: 'officer@harare.com',
@@ -213,6 +231,7 @@ export class SeedService {
         passwordHash: hash('officer123'),
         role: 'loan_officer',
         branch: br1,
+        organization: org,
       },
     ];
 
@@ -706,6 +725,7 @@ export class SeedService {
 
     return {
       branches: 2,
+      organizations: 1,
       users: users.length,
       clients: savedClients.length + recoveryBorrowers.length,
       loans: savedLoans.length + recoveryLoans.length,

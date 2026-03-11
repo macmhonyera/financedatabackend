@@ -23,6 +23,11 @@ type LoanCreateInput = Partial<Loan> & {
   disbursedAt?: string | Date;
 };
 
+type SetLoanStatusOptions = {
+  disbursedAt?: string | Date;
+  reason?: string;
+};
+
 @Injectable()
 export class LoansService {
   private readonly logger = new Logger(LoansService.name);
@@ -396,6 +401,100 @@ export class LoansService {
     return this.findById(id);
   }
 
+  async collectionsDueTodayScoped(user: any, date?: string) {
+    let dueDate: string;
+    if (date) {
+      const parsed = new Date(date);
+      if (Number.isNaN(parsed.getTime())) {
+        throw new BadRequestException('date must be a valid date');
+      }
+      dueDate = this.toDateOnly(parsed);
+    } else {
+      dueDate = this.toDateOnly(new Date());
+    }
+
+    const query = this.installmentRepo
+      .createQueryBuilder('installment')
+      .leftJoinAndSelect('installment.loan', 'loan')
+      .leftJoinAndSelect('loan.client', 'client')
+      .leftJoinAndSelect('client.branch', 'branch')
+      .where('installment.dueDate = :dueDate', { dueDate })
+      .andWhere('installment.status != :paidStatus', { paidStatus: 'paid' })
+      .orderBy('client.name', 'ASC')
+      .addOrderBy('installment.installmentNumber', 'ASC');
+
+    if (user?.role !== 'admin') {
+      if (!user?.branch) {
+        throw new ForbiddenException('Branch scope is required');
+      }
+      query.andWhere('branch.id = :branchId', { branchId: user.branch });
+    }
+
+    return query.getMany();
+  }
+
+  async rebuildScheduleScoped(id: string, user: any) {
+    const loan = await this.findByIdScoped(id, user);
+    if (loan.payments?.length) {
+      throw new BadRequestException('Cannot rebuild schedule for a loan that already has payments');
+    }
+
+    const principal = Number(loan.amount || 0);
+    if (principal <= 0) {
+      throw new BadRequestException('Loan amount must be greater than 0');
+    }
+
+    const termMonths = Number(loan.termMonths || 0);
+    if (termMonths <= 0) {
+      throw new BadRequestException('Loan term is required to rebuild schedule');
+    }
+
+    const repaymentFrequency = (loan.repaymentFrequency || 'monthly') as RepaymentFrequency;
+    const interestRateAnnual = Number(loan.interestRateAnnual || 0);
+    const scheduleType = ((loan.product as any)?.scheduleType || 'reducing') as ScheduleType;
+    const processingFeeRate = Number((loan.product as any)?.processingFeeRate || 0);
+    const processingFee = this.round2((principal * processingFeeRate) / 100);
+    const disbursedAt = loan.disbursedAt ? new Date(loan.disbursedAt) : new Date();
+    if (Number.isNaN(disbursedAt.getTime())) {
+      throw new BadRequestException('Loan disbursedAt must be a valid date');
+    }
+
+    const schedule = this.buildRepaymentSchedule({
+      loanId: id,
+      principal,
+      interestRateAnnual,
+      termMonths,
+      repaymentFrequency,
+      scheduleType,
+      disbursedAt,
+      processingFee,
+    });
+
+    await this.repo.manager.transaction(async (manager) => {
+      const loanRepo = manager.getRepository(Loan);
+      const installmentRepo = manager.getRepository(LoanInstallment);
+
+      await installmentRepo.delete({ loan: { id } as any } as any);
+      if (schedule.length > 0) {
+        await installmentRepo.save(schedule as any);
+      }
+
+      await loanRepo.update(
+        { id } as any,
+        {
+          balance: this.round2(principal + processingFee),
+          disbursedAt,
+          dueAt:
+            schedule.length > 0
+              ? new Date(`${schedule[schedule.length - 1].dueDate as string}T00:00:00.000Z`)
+              : null,
+        } as any,
+      );
+    });
+
+    return this.findByIdScoped(id, user);
+  }
+
   async setStatus(id: string, status: Loan['status']) {
     await this.repo.update(id, { status } as any);
     const loan = await this.findById(id);
@@ -418,9 +517,34 @@ export class LoansService {
     return loan;
   }
 
-  async setStatusScoped(id: string, status: Loan['status'], user: any) {
-    await this.findByIdScoped(id, user);
-    await this.repo.update(id, { status } as any);
+  async setStatusScoped(id: string, status: Loan['status'], user: any, options?: SetLoanStatusOptions) {
+    const existing = await this.findByIdScoped(id, user);
+    const updates: Partial<Loan> = { status };
+
+    if (status === 'active') {
+      updates.approvedAt = new Date();
+      updates.approvedByUserId = user?.id || user?.sub || null;
+
+      if (options?.disbursedAt) {
+        const parsed = new Date(options.disbursedAt);
+        if (Number.isNaN(parsed.getTime())) {
+          throw new BadRequestException('disbursedAt must be a valid date');
+        }
+        updates.disbursedAt = parsed;
+      } else if (!existing.disbursedAt) {
+        updates.disbursedAt = new Date();
+      }
+    }
+
+    if (status === 'rejected') {
+      updates.rejectedAt = new Date();
+      updates.rejectedByUserId = user?.id || user?.sub || null;
+      if (options?.reason) {
+        updates.rejectionReason = String(options.reason).trim();
+      }
+    }
+
+    await this.repo.update(id, updates as any);
     const loan = await this.findById(id);
     if (loan && status === 'active') {
       const firstDueDate = loan.installments?.[0]?.dueDate;

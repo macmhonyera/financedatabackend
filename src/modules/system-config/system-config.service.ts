@@ -1,4 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Organization } from '../../entities/organization.entity';
+import { User } from '../../entities/user.entity';
+import { UpdateCompanyProfileDto } from './dto/update-company-profile.dto';
 
 type ReportRole = 'admin' | 'manager' | 'loan_officer' | 'collector';
 type ReportType =
@@ -24,6 +29,19 @@ type ReportCatalogItem = {
 
 @Injectable()
 export class SystemConfigService {
+  constructor(
+    @InjectRepository(Organization)
+    private readonly orgRepo: Repository<Organization>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
+  ) {}
+
+  private readonly defaultBranding = {
+    companyName: 'MicroFinance Pro',
+    primary: '30 58 138',
+    accent: '20 184 166',
+  };
+
   private parseCsv(input: string | undefined, fallback: string[]) {
     const parsed = String(input || '')
       .split(',')
@@ -61,6 +79,114 @@ export class SystemConfigService {
       code: code.toUpperCase(),
       label: code.toUpperCase(),
     }));
+  }
+
+  private normalizeRgbTriplet(input: string, fallback: string) {
+    const values = String(input || '')
+      .trim()
+      .split(/\s+/)
+      .map((token) => Number(token));
+
+    if (values.length !== 3 || values.some((value) => !Number.isFinite(value))) {
+      return fallback;
+    }
+
+    return values
+      .map((value) => Math.max(0, Math.min(255, Math.round(value))))
+      .join(' ');
+  }
+
+  private mapCompanyProfile(organization: Organization) {
+    return {
+      organizationId: organization.id,
+      companyName: organization.name || this.defaultBranding.companyName,
+      primary: organization.primaryColor || this.defaultBranding.primary,
+      accent: organization.accentColor || this.defaultBranding.accent,
+      logo: organization.logoUrl || null,
+      updatedAt: organization.updatedAt,
+    };
+  }
+
+  private async ensureDefaultOrganization() {
+    const first = (await this.orgRepo.find({ order: { createdAt: 'ASC' }, take: 1 }))[0];
+    if (first) return first;
+
+    const created = this.orgRepo.create({
+      name: this.defaultBranding.companyName,
+      primaryColor: this.defaultBranding.primary,
+      accentColor: this.defaultBranding.accent,
+    });
+    return this.orgRepo.save(created);
+  }
+
+  private async resolveOrganizationForUser(user: any) {
+    const userId = String(user?.id || '').trim();
+    const tokenOrganizationId = String(user?.organization || '').trim();
+
+    if (tokenOrganizationId) {
+      const fromToken = await this.orgRepo.findOne({ where: { id: tokenOrganizationId } });
+      if (fromToken) return fromToken;
+    }
+
+    if (userId) {
+      const entity = await this.userRepo.findOne({
+        where: { id: userId },
+        relations: ['organization'],
+      });
+
+      if (entity?.organization) {
+        return entity.organization;
+      }
+
+      const fallback = await this.ensureDefaultOrganization();
+
+      if (entity && !entity.organization) {
+        entity.organization = fallback;
+        await this.userRepo.save(entity);
+      }
+
+      return fallback;
+    }
+
+    return this.ensureDefaultOrganization();
+  }
+
+  async getCompanyProfile(user: any) {
+    const organization = await this.resolveOrganizationForUser(user);
+    return this.mapCompanyProfile(organization);
+  }
+
+  async updateCompanyProfile(user: any, updates: UpdateCompanyProfileDto) {
+    const organization = await this.resolveOrganizationForUser(user);
+
+    if (updates.companyName !== undefined) {
+      const trimmed = updates.companyName.trim();
+      if (trimmed.length > 0) {
+        organization.name = trimmed;
+      }
+    }
+
+    if (updates.primary !== undefined) {
+      organization.primaryColor = this.normalizeRgbTriplet(
+        updates.primary,
+        organization.primaryColor || this.defaultBranding.primary,
+      );
+    }
+
+    if (updates.accent !== undefined) {
+      organization.accentColor = this.normalizeRgbTriplet(
+        updates.accent,
+        organization.accentColor || this.defaultBranding.accent,
+      );
+    }
+
+    if (updates.logo !== undefined) {
+      const logo = updates.logo.trim();
+      organization.logoUrl = logo.length > 0 ? logo : null;
+    }
+
+    const saved = await this.orgRepo.save(organization);
+    return this.mapCompanyProfile(saved);
   }
 
   getReportCatalog() {

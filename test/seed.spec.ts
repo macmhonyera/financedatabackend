@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { Branch } from '../src/entities/branch.entity';
+import { Organization } from '../src/entities/organization.entity';
 import { User } from '../src/entities/user.entity';
 import { Client } from '../src/entities/client.entity';
 import { ClientAsset } from '../src/entities/client-asset.entity';
@@ -31,6 +32,7 @@ describe('SeedService', () => {
       entities: [
         User,
         Branch,
+        Organization,
         Client,
         ClientAsset,
         Loan,

@@ -16,8 +16,10 @@ import { LoanProductsModule } from '../../src/modules/loan-products/loan-product
 import { NotificationsModule } from '../../src/modules/notifications/notifications.module';
 import { CreditScoreModule } from '../../src/modules/credit-score/credit-score.module';
 import { AiRecoveryAgentModule } from '../../src/modules/ai-recovery-agent/ai-recovery-agent.module';
+import { SystemConfigModule } from '../../src/modules/system-config/system-config.module';
 import { User } from '../../src/entities/user.entity';
 import { Branch } from '../../src/entities/branch.entity';
+import { Organization } from '../../src/entities/organization.entity';
 import { Client } from '../../src/entities/client.entity';
 import { ClientAsset } from '../../src/entities/client-asset.entity';
 import { Loan } from '../../src/entities/loan.entity';
@@ -39,6 +41,7 @@ import { RecoveryAction } from '../../src/entities/recovery-action.entity';
 export const TEST_ENTITIES = [
   User,
   Branch,
+  Organization,
   Client,
   ClientAsset,
   Loan,
@@ -83,6 +86,7 @@ export async function createTestingApp(): Promise<{ app: INestApplication; modul
       CreditScoreModule,
       LoanProductsModule,
       NotificationsModule,
+      SystemConfigModule,
       AiRecoveryAgentModule,
     ],
   }).compile();

@@ -8,11 +8,11 @@ export class UsersService {
   constructor(@InjectRepository(User) private repo: Repository<User>) {}
 
   findByEmail(email: string) {
-    return this.repo.findOne({ where: { email }, relations: ['branch'] });
+    return this.repo.findOne({ where: { email }, relations: ['branch', 'organization'] });
   }
 
   findById(id: string) {
-    return this.repo.findOne({ where: { id }, relations: ['branch'] });
+    return this.repo.findOne({ where: { id }, relations: ['branch', 'organization'] });
   }
 
   create(user: Partial<User>) {
@@ -21,6 +21,6 @@ export class UsersService {
   }
 
   async all() {
-    return this.repo.find({ relations: ['branch'] });
+    return this.repo.find({ relations: ['branch', 'organization'] });
   }
 }

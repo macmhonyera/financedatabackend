@@ -66,3 +66,45 @@ npm run migration:run
 Added migration:
 
 - `src/migrations/1762000000000-AddCreditScoreResultsAndClientProfileColumns.ts`
+
+## Deploy backend to Vercel
+
+This repository now includes:
+
+- `api/index.ts`: serverless NestJS entry point for Vercel
+- `vercel.json`: rewrites all routes to the backend function
+
+Deploy steps:
+
+1. Install the Vercel CLI (if needed):
+
+```bash
+npm i -g vercel
+```
+
+2. Link this backend folder to your Vercel project/team:
+
+```bash
+vercel link
+```
+
+3. Add required environment variables in Vercel (Project Settings > Environment Variables), for example:
+
+- `NODE_ENV=production`
+- `DATABASE_URL` (recommended for managed providers like Supabase)
+- `DATABASE_SSL=true` (optional override; auto-enabled for Supabase URLs/hosts)
+- `DATABASE_HOST`
+- `DATABASE_PORT`
+- `DATABASE_USER`
+- `DATABASE_PASSWORD`
+- `DATABASE_NAME`
+- `JWT_SECRET`
+- `JWT_EXPIRES_IN`
+- `CORS_ORIGINS`
+- `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM_NUMBER` (if SMS is enabled)
+
+4. Deploy:
+
+```bash
+vercel --prod
+```

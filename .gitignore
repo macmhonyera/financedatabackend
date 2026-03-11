@@ -65,3 +65,4 @@ Thumbs.db
 
 # Optional: Python dotenv (if your microservice uses it separately)
 *.env
+.vercel
