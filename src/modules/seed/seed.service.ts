@@ -24,6 +24,21 @@ import { RecoveryAction } from '../../entities/recovery-action.entity';
 export class SeedService {
   constructor(private dataSource: DataSource) {}
 
+  private round2(value: number) {
+    return Number((Math.round(value * 100) / 100).toFixed(2));
+  }
+
+  private dateOffset(days: number, hours = 10, minutes = 0) {
+    const date = new Date();
+    date.setDate(date.getDate() + days);
+    date.setHours(hours, minutes, 0, 0);
+    return date;
+  }
+
+  private dateOnly(input: Date) {
+    return input.toISOString().slice(0, 10);
+  }
+
   async run() {
     const repoBranch = this.dataSource.getRepository(Branch);
     const repoUser = this.dataSource.getRepository(User);
@@ -283,14 +298,425 @@ export class SeedService {
     const payments = repoPayment.create(paymentData as any);
     const savedPayments = await repoPayment.save(payments as any);
 
+    // ----------------------------
+    // Recovery demo dataset (high / medium / low risk borrowers)
+    // ----------------------------
+    const recoveryBorrowers = await repoClient.save(
+      repoClient.create([
+        {
+          name: 'Recovery Demo - High Risk',
+          phone: '+263771700001',
+          status: 'active',
+          collectionStatus: 'defaulted',
+          loanOfficer: 'OfficerHarare',
+          branch: br1,
+        },
+        {
+          name: 'Recovery Demo - Medium Risk',
+          phone: '+263771700002',
+          status: 'active',
+          collectionStatus: 'overdue',
+          loanOfficer: 'OfficerHarare',
+          branch: br1,
+        },
+        {
+          name: 'Recovery Demo - Low Risk',
+          phone: '+263771700003',
+          status: 'active',
+          collectionStatus: 'overdue',
+          loanOfficer: 'ManagerBulawayo',
+          branch: br2,
+        },
+      ] as any),
+    );
+
+    const [highBorrower, mediumBorrower, lowBorrower] = recoveryBorrowers as unknown as Client[];
+    const recoveryProduct = savedProducts[0] as any;
+
+    const recoveryLoans = await repoLoan.save(
+      repoLoan.create([
+        {
+          amount: 1200,
+          balance: 810,
+          status: 'overdue',
+          client: { id: highBorrower.id } as any,
+          product: { id: recoveryProduct.id } as any,
+          currency: 'USD',
+          termMonths: 6,
+          interestRateAnnual: 18,
+          repaymentFrequency: 'monthly',
+          disbursedAt: this.dateOffset(-90, 9),
+        },
+        {
+          amount: 900,
+          balance: 540,
+          status: 'overdue',
+          client: { id: mediumBorrower.id } as any,
+          product: { id: recoveryProduct.id } as any,
+          currency: 'USD',
+          termMonths: 6,
+          interestRateAnnual: 16,
+          repaymentFrequency: 'monthly',
+          disbursedAt: this.dateOffset(-70, 9),
+        },
+        {
+          amount: 700,
+          balance: 300,
+          status: 'active',
+          client: { id: lowBorrower.id } as any,
+          product: { id: recoveryProduct.id } as any,
+          currency: 'USD',
+          termMonths: 5,
+          interestRateAnnual: 14,
+          repaymentFrequency: 'monthly',
+          disbursedAt: this.dateOffset(-45, 9),
+        },
+      ] as any),
+    );
+
+    const [highLoan, mediumLoan, lowLoan] = recoveryLoans as unknown as Loan[];
+
+    const recoveryInstallments = await repoLoanInstallment.save(
+      repoLoanInstallment.create([
+        {
+          loan: { id: highLoan.id } as any,
+          installmentNumber: 1,
+          dueDate: this.dateOnly(this.dateOffset(-35)),
+          principalDue: 180,
+          interestDue: 40,
+          feeDue: 0,
+          penaltyDue: 0,
+          totalDue: 220,
+          principalPaid: 0,
+          interestPaid: 0,
+          feePaid: 0,
+          penaltyPaid: 0,
+          status: 'overdue',
+        },
+        {
+          loan: { id: highLoan.id } as any,
+          installmentNumber: 2,
+          dueDate: this.dateOnly(this.dateOffset(-20)),
+          principalDue: 180,
+          interestDue: 40,
+          feeDue: 0,
+          penaltyDue: 0,
+          totalDue: 220,
+          principalPaid: 60,
+          interestPaid: 10,
+          feePaid: 0,
+          penaltyPaid: 0,
+          status: 'partial',
+        },
+        {
+          loan: { id: highLoan.id } as any,
+          installmentNumber: 3,
+          dueDate: this.dateOnly(this.dateOffset(-8)),
+          principalDue: 180,
+          interestDue: 40,
+          feeDue: 0,
+          penaltyDue: 0,
+          totalDue: 220,
+          principalPaid: 0,
+          interestPaid: 0,
+          feePaid: 0,
+          penaltyPaid: 0,
+          status: 'overdue',
+        },
+        {
+          loan: { id: highLoan.id } as any,
+          installmentNumber: 4,
+          dueDate: this.dateOnly(this.dateOffset(15)),
+          principalDue: 180,
+          interestDue: 40,
+          feeDue: 0,
+          penaltyDue: 0,
+          totalDue: 220,
+          principalPaid: 0,
+          interestPaid: 0,
+          feePaid: 0,
+          penaltyPaid: 0,
+          status: 'pending',
+        },
+        {
+          loan: { id: mediumLoan.id } as any,
+          installmentNumber: 1,
+          dueDate: this.dateOnly(this.dateOffset(-10)),
+          principalDue: 150,
+          interestDue: 30,
+          feeDue: 0,
+          penaltyDue: 0,
+          totalDue: 180,
+          principalPaid: 0,
+          interestPaid: 0,
+          feePaid: 0,
+          penaltyPaid: 0,
+          status: 'overdue',
+        },
+        {
+          loan: { id: mediumLoan.id } as any,
+          installmentNumber: 2,
+          dueDate: this.dateOnly(this.dateOffset(20)),
+          principalDue: 150,
+          interestDue: 30,
+          feeDue: 0,
+          penaltyDue: 0,
+          totalDue: 180,
+          principalPaid: 0,
+          interestPaid: 0,
+          feePaid: 0,
+          penaltyPaid: 0,
+          status: 'pending',
+        },
+        {
+          loan: { id: mediumLoan.id } as any,
+          installmentNumber: 3,
+          dueDate: this.dateOnly(this.dateOffset(50)),
+          principalDue: 150,
+          interestDue: 30,
+          feeDue: 0,
+          penaltyDue: 0,
+          totalDue: 180,
+          principalPaid: 0,
+          interestPaid: 0,
+          feePaid: 0,
+          penaltyPaid: 0,
+          status: 'pending',
+        },
+        {
+          loan: { id: lowLoan.id } as any,
+          installmentNumber: 1,
+          dueDate: this.dateOnly(this.dateOffset(-1)),
+          principalDue: 130,
+          interestDue: 30,
+          feeDue: 0,
+          penaltyDue: 0,
+          totalDue: 160,
+          principalPaid: 10,
+          interestPaid: 10,
+          feePaid: 0,
+          penaltyPaid: 0,
+          status: 'partial',
+        },
+        {
+          loan: { id: lowLoan.id } as any,
+          installmentNumber: 2,
+          dueDate: this.dateOnly(this.dateOffset(29)),
+          principalDue: 130,
+          interestDue: 30,
+          feeDue: 0,
+          penaltyDue: 0,
+          totalDue: 160,
+          principalPaid: 0,
+          interestPaid: 0,
+          feePaid: 0,
+          penaltyPaid: 0,
+          status: 'pending',
+        },
+      ] as any),
+    );
+
+    const saveBorrowerMessage = async (payload: Partial<BorrowerMessage>) => {
+      const saved = await repoBorrowerMessage.save(
+        repoBorrowerMessage.create(payload as any),
+      );
+      return (Array.isArray(saved) ? saved[0] : saved) as BorrowerMessage;
+    };
+
+    const highReminder1 = await saveBorrowerMessage({
+      borrower: { id: highBorrower.id } as any,
+      loan: { id: highLoan.id } as any,
+      channel: 'whatsapp',
+      direction: 'outbound',
+      messageType: 'overdue_notice',
+      messageContent:
+        'Hello Recovery Demo - High Risk, your payment is overdue by 12 day(s). Please settle your account.',
+      status: 'responded',
+      metadata: { automated: true, stage: 'overdue_notice' },
+      timestamp: this.dateOffset(-12, 11, 15),
+    });
+
+    const highReminder2 = await saveBorrowerMessage({
+      borrower: { id: highBorrower.id } as any,
+      loan: { id: highLoan.id } as any,
+      channel: 'whatsapp',
+      direction: 'outbound',
+      messageType: 'overdue_notice',
+      messageContent:
+        'Reminder: your account is still overdue. Please make a payment to avoid escalation.',
+      status: 'responded',
+      metadata: { automated: true, stage: 'overdue_notice' },
+      timestamp: this.dateOffset(-8, 10, 30),
+    });
+
+    const highInboundPromise = await saveBorrowerMessage({
+      borrower: { id: highBorrower.id } as any,
+      loan: { id: highLoan.id } as any,
+      channel: 'whatsapp',
+      direction: 'inbound',
+      messageType: 'promise_to_pay',
+      messageContent: 'I will pay USD 120 tomorrow.',
+      aiResponse: 'Thank you. I have recorded your promise to pay.',
+      status: 'responded',
+      timestamp: this.dateOffset(-7, 9, 45),
+    });
+
+    const highEscalationMessage = await saveBorrowerMessage({
+      borrower: { id: highBorrower.id } as any,
+      loan: { id: highLoan.id } as any,
+      channel: 'whatsapp',
+      direction: 'outbound',
+      messageType: 'escalation',
+      messageContent:
+        'Your account has been escalated due to extended overdue status. Our team will contact you.',
+      status: 'responded',
+      metadata: { automated: true, stage: 'escalation' },
+      timestamp: this.dateOffset(-2, 16, 5),
+    });
+
+    const mediumReminderToday = await saveBorrowerMessage({
+      borrower: { id: mediumBorrower.id } as any,
+      loan: { id: mediumLoan.id } as any,
+      channel: 'whatsapp',
+      direction: 'outbound',
+      messageType: 'due_today_reminder',
+      messageContent: 'Your payment is due today. Please pay USD 180.00.',
+      status: 'responded',
+      metadata: { automated: true, stage: 'due_today_reminder' },
+      timestamp: this.dateOffset(0, 8, 45),
+    });
+
+    const mediumInbound = await saveBorrowerMessage({
+      borrower: { id: mediumBorrower.id } as any,
+      loan: { id: mediumLoan.id } as any,
+      channel: 'whatsapp',
+      direction: 'inbound',
+      messageType: 'partial_payment_intent',
+      messageContent: 'I can make a partial payment of 80 today.',
+      aiResponse: 'Thank you, we have recorded your partial payment intent.',
+      status: 'responded',
+      timestamp: this.dateOffset(0, 9, 30),
+    });
+
+    const lowReminder = await saveBorrowerMessage({
+      borrower: { id: lowBorrower.id } as any,
+      loan: { id: lowLoan.id } as any,
+      channel: 'whatsapp',
+      direction: 'outbound',
+      messageType: 'upcoming_reminder',
+      messageContent: 'Friendly reminder: your next payment is due soon.',
+      status: 'responded',
+      metadata: { automated: true, stage: 'upcoming_payment_reminder' },
+      timestamp: this.dateOffset(-1, 12, 0),
+    });
+
+    const recoveryPromises = await repoPaymentPromise.save(
+      repoPaymentPromise.create([
+        {
+          borrower: { id: highBorrower.id } as any,
+          loan: { id: highLoan.id } as any,
+          sourceMessage: { id: highInboundPromise.id } as any,
+          promisedAmount: 120,
+          promisedDate: this.dateOnly(this.dateOffset(-9)),
+          status: 'broken',
+          notes: 'Promise not honored within agreed timeline.',
+          resolvedAt: this.dateOffset(-8, 17, 10),
+        },
+        {
+          borrower: { id: mediumBorrower.id } as any,
+          loan: { id: mediumLoan.id } as any,
+          sourceMessage: { id: mediumInbound.id } as any,
+          promisedAmount: 80,
+          promisedDate: this.dateOnly(this.dateOffset(2)),
+          status: 'open',
+          notes: 'Borrower committed to part payment this week.',
+        },
+        {
+          borrower: { id: lowBorrower.id } as any,
+          loan: { id: lowLoan.id } as any,
+          sourceMessage: { id: lowReminder.id } as any,
+          promisedAmount: 60,
+          promisedDate: this.dateOnly(this.dateOffset(-3)),
+          status: 'kept',
+          notes: 'Borrower paid as promised.',
+          resolvedAt: this.dateOffset(-2, 14, 15),
+        },
+      ] as any),
+    );
+
+    const recoveryActions = await repoRecoveryAction.save(
+      repoRecoveryAction.create([
+        {
+          borrower: { id: highBorrower.id } as any,
+          loan: { id: highLoan.id } as any,
+          message: { id: highReminder1.id } as any,
+          actionType: 'overdue_notice',
+          status: 'completed',
+          riskScore: 86,
+          riskCategory: 'HIGH',
+          details: { reason: '14+ days overdue' },
+          executedAt: this.dateOffset(-12, 11, 20),
+        },
+        {
+          borrower: { id: highBorrower.id } as any,
+          loan: { id: highLoan.id } as any,
+          message: { id: highEscalationMessage.id } as any,
+          actionType: 'escalation',
+          status: 'escalated',
+          riskScore: 86,
+          riskCategory: 'HIGH',
+          details: { reason: 'Account exceeded 7 overdue days' },
+          executedAt: this.dateOffset(-2, 16, 10),
+        },
+        {
+          borrower: { id: mediumBorrower.id } as any,
+          loan: { id: mediumLoan.id } as any,
+          message: { id: mediumReminderToday.id } as any,
+          actionType: 'due_today_reminder',
+          status: 'completed',
+          riskScore: 34,
+          riskCategory: 'MEDIUM',
+          details: { reason: 'Due date reached' },
+          executedAt: this.dateOffset(0, 8, 50),
+        },
+        {
+          borrower: { id: mediumBorrower.id } as any,
+          loan: { id: mediumLoan.id } as any,
+          message: { id: mediumInbound.id } as any,
+          actionType: 'promise_followup',
+          status: 'pending',
+          riskScore: 34,
+          riskCategory: 'MEDIUM',
+          details: { reason: 'Partial payment intent recorded' },
+          scheduledFor: this.dateOffset(1, 9, 0),
+        },
+        {
+          borrower: { id: lowBorrower.id } as any,
+          loan: { id: lowLoan.id } as any,
+          message: { id: lowReminder.id } as any,
+          actionType: 'upcoming_payment_reminder',
+          status: 'completed',
+          riskScore: 14,
+          riskCategory: 'LOW',
+          details: { reason: 'Upcoming due date reminder' },
+          executedAt: this.dateOffset(-1, 12, 5),
+        },
+      ] as any),
+    );
+
     return {
       branches: 2,
       users: users.length,
-      clients: savedClients.length,
-      loans: savedLoans.length,
+      clients: savedClients.length + recoveryBorrowers.length,
+      loans: savedLoans.length + recoveryLoans.length,
       payments: savedPayments.length,
       products: savedProducts.length,
       notificationTemplates: savedTemplates.length,
+      recoveryDemoBorrowers: recoveryBorrowers.length,
+      recoveryDemoInstallments: recoveryInstallments.length,
+      recoveryDemoMessages: 7,
+      recoveryDemoPromises: recoveryPromises.length,
+      recoveryDemoActions: recoveryActions.length,
     };
   }
 }

@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Loan } from '../../entities/loan.entity';
 import { Client } from '../../entities/client.entity';
-import { ClientAsset } from '../../entities/client-asset.entity';
 import { LoanProduct } from '../../entities/loan-product.entity';
 import { LoanInstallment } from '../../entities/loan-installment.entity';
 import { LoansService } from './loans.service';
@@ -13,7 +12,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Loan, Client, ClientAsset, LoanProduct, LoanInstallment]),
+    TypeOrmModule.forFeature([Loan, Client, LoanProduct, LoanInstallment]),
     CreditModule,
     LoanProductsModule,
     NotificationsModule,
