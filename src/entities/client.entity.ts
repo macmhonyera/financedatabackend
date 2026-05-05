@@ -23,11 +23,15 @@ export type ClientDocumentType =
 
 export type ClientDocumentRecord = {
   id: string;
+  idempotencyKey?: string;
   documentType: ClientDocumentType;
   documentName: string;
   mimeType: string;
   sizeBytes: number;
-  dataUrl: string;
+  /** Legacy: full base64 data URL. New uploads use storageKey instead. */
+  dataUrl?: string;
+  /** Object-storage key. Resolve to a download URL via the storage provider. */
+  storageKey?: string;
   documentNumber?: string;
   expiryDate?: string;
   notes?: string;
@@ -40,6 +44,9 @@ export type ClientDocumentRecord = {
 export class Client {
   @PrimaryGeneratedColumn('uuid')
   id: string;
+
+  @Column({ nullable: true, unique: true })
+  idempotencyKey?: string;
 
   @Column()
   name: string;

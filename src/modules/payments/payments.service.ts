@@ -119,6 +119,7 @@ export class PaymentsService {
         externalReference: (data as any).externalReference,
         channel: rawChannel || undefined,
         metadata: (data as any).metadata,
+        receiptImageKey: (data as any).receiptImageKey || undefined,
         reconciliationStatus: isInstantlyReconciled ? 'reconciled' : 'pending',
         reconciledAt: isInstantlyReconciled ? new Date() : undefined,
       } as any);

@@ -1,4 +1,11 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  ManyToOne,
+  CreateDateColumn,
+  UpdateDateColumn,
+} from 'typeorm';
 import { Loan } from './loan.entity';
 import { Client } from './client.entity';
 
@@ -39,6 +46,12 @@ export class Payment {
   @Column({ nullable: true })
   reconciledAt?: Date;
 
+  @Column({ nullable: true })
+  receiptImageKey?: string;
+
   @CreateDateColumn()
   createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
 }

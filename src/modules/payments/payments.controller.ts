@@ -40,6 +40,7 @@ export class PaymentsController {
         externalReference: body.externalReference,
         channel: body.channel,
         metadata: body.metadata,
+        receiptImageKey: body.receiptImageKey,
       } as any,
       req.user,
     );

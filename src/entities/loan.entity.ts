@@ -20,6 +20,9 @@ export class Loan {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  @Column({ nullable: true, unique: true })
+  idempotencyKey?: string;
+
   @Column('decimal', { precision: 12, scale: 2 })
   amount: number;
 
@@ -85,6 +88,9 @@ export class Loan {
 
   @Column('json', { nullable: true })
   collateralSnapshot?: Record<string, any>;
+
+  @Column({ nullable: true })
+  signatureImageKey?: string;
 
   @OneToMany(() => Payment, (p) => p.loan)
   payments: Payment[];

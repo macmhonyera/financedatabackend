@@ -1,10 +1,13 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { validateEnv } from './common/env-validation';
 
 async function bootstrap() {
+  validateEnv();
+  const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule);
   app.useGlobalPipes(
     new ValidationPipe({
@@ -45,8 +48,8 @@ async function bootstrap() {
 
   const port = process.env.PORT ? Number(process.env.PORT) : 3031;
   await app.listen(port);
-  console.log(`Backend listening on http://localhost:${port}`);
-  console.log(`Swagger docs available at http://localhost:${port}/api/docs`);
+  logger.log(`Backend listening on http://localhost:${port}`);
+  logger.log(`Swagger docs available at http://localhost:${port}/api/docs`);
 }
 
 bootstrap();

@@ -19,6 +19,9 @@ export class PaymentPromise {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  @Column({ name: 'idempotency_key', nullable: true, unique: true })
+  idempotencyKey?: string;
+
   @ManyToOne(() => Client, { nullable: false, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'borrower_id' })
   borrower: Client;

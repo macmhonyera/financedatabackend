@@ -20,7 +20,7 @@ describe('Integration: AI recovery repositories', () => {
     dataSource = moduleRef.get(DataSource);
 
     await seedDatabase(moduleRef);
-  });
+  }, 30000);
 
   afterAll(async () => {
     await app.close();

@@ -13,6 +13,7 @@ import { CreditService } from '../credit/credit.service';
 import { LoanProduct, RepaymentFrequency, ScheduleType } from '../../entities/loan-product.entity';
 import { LoanInstallment } from '../../entities/loan-installment.entity';
 import { NotificationsService } from '../notifications/notifications.service';
+import { assertIfMatch } from '../../common/precondition';
 
 type LoanCreateInput = Partial<Loan> & {
   productId?: string;
@@ -167,6 +168,21 @@ export class LoansService {
       throw new BadRequestException('clientId is required');
     }
 
+    const idempotencyKey = (data as any).idempotencyKey?.trim();
+    if (idempotencyKey) {
+      const existing = await this.repo.findOne({
+        where: { idempotencyKey } as any,
+        relations: ['client', 'client.branch', 'payments', 'product', 'installments'],
+      });
+      if (existing) {
+        const branchId = ((existing.client as any)?.branch as any)?.id;
+        if (user?.role !== 'admin' && user?.branch && branchId && branchId !== user.branch) {
+          throw new ForbiddenException('Loan exists for another branch scope');
+        }
+        return existing;
+      }
+    }
+
     const client = await this.clientRepo.findOne({ where: { id: clientId }, relations: ['branch'] });
     if (!client) {
       throw new BadRequestException(`Client with ID ${clientId} not found`);
@@ -222,6 +238,7 @@ export class LoansService {
       const installmentRepo = manager.getRepository(LoanInstallment);
 
       const entity = loanRepo.create({
+        idempotencyKey: idempotencyKey || undefined,
         amount: this.round2(amount),
         balance: openingBalance,
         status: 'pending',
@@ -395,8 +412,9 @@ export class LoansService {
     return this.findById(id);
   }
 
-  async updateScoped(id: string, updates: Partial<Loan>, user: any) {
-    await this.findByIdScoped(id, user);
+  async updateScoped(id: string, updates: Partial<Loan>, user: any, ifMatch?: string) {
+    const existing = await this.findByIdScoped(id, user);
+    assertIfMatch(ifMatch, existing.updatedAt, existing);
     await this.repo.update(id, updates as any);
     return this.findById(id);
   }
@@ -517,8 +535,14 @@ export class LoansService {
     return loan;
   }
 
-  async setStatusScoped(id: string, status: Loan['status'], user: any, options?: SetLoanStatusOptions) {
+  async setStatusScoped(
+    id: string,
+    status: Loan['status'],
+    user: any,
+    options?: SetLoanStatusOptions & { ifMatch?: string },
+  ) {
     const existing = await this.findByIdScoped(id, user);
+    assertIfMatch(options?.ifMatch, existing.updatedAt, existing);
     const updates: Partial<Loan> = { status };
 
     if (status === 'active') {

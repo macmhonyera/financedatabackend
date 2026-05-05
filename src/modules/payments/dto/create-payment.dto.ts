@@ -42,4 +42,9 @@ export class CreatePaymentDto {
   @IsOptional()
   @IsObject()
   metadata?: Record<string, any>;
+
+  @ApiProperty({ required: false, description: 'Storage key of an optional receipt photo (uploaded via /storage/upload-url)' })
+  @IsOptional()
+  @IsString()
+  receiptImageKey?: string;
 }

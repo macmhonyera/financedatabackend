@@ -3,6 +3,11 @@ import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
 export class CreateClientDto {
+  @ApiProperty({ required: false, description: 'Optional client-supplied key to deduplicate retries from offline mobile clients.' })
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
+
   @ApiProperty()
   @IsString()
   name: string;

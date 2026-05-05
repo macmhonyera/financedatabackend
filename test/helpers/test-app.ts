@@ -37,6 +37,11 @@ import { SeedService } from '../../src/modules/seed/seed.service';
 import { BorrowerMessage } from '../../src/entities/borrower-message.entity';
 import { PaymentPromise } from '../../src/entities/payment-promise.entity';
 import { RecoveryAction } from '../../src/entities/recovery-action.entity';
+import { FieldVisit } from '../../src/entities/field-visit.entity';
+import { SyncModule } from '../../src/modules/sync/sync.module';
+import { FieldVisitsModule } from '../../src/modules/field-visits/field-visits.module';
+import { StorageHttpModule } from '../../src/modules/storage/storage.module';
+import { StorageModule } from '../../src/common/storage/storage.module';
 
 export const TEST_ENTITIES = [
   User,
@@ -58,6 +63,7 @@ export const TEST_ENTITIES = [
   BorrowerMessage,
   PaymentPromise,
   RecoveryAction,
+  FieldVisit,
 ];
 
 export async function createTestingApp(): Promise<{ app: INestApplication; moduleRef: TestingModule }> {
@@ -88,6 +94,10 @@ export async function createTestingApp(): Promise<{ app: INestApplication; modul
       NotificationsModule,
       SystemConfigModule,
       AiRecoveryAgentModule,
+      StorageModule,
+      StorageHttpModule,
+      SyncModule,
+      FieldVisitsModule,
     ],
   }).compile();
 

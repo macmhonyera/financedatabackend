@@ -20,6 +20,7 @@ import { Notification } from './entities/notification.entity';
 import { BorrowerMessage } from './entities/borrower-message.entity';
 import { PaymentPromise } from './entities/payment-promise.entity';
 import { RecoveryAction } from './entities/recovery-action.entity';
+import { FieldVisit } from './entities/field-visit.entity';
 
 function parseBoolean(value: string | undefined) {
   if (value === undefined) return undefined;
@@ -64,6 +65,7 @@ const AppDataSource = new DataSource({
     BorrowerMessage,
     PaymentPromise,
     RecoveryAction,
+    FieldVisit,
   ],
   migrations: [`${__dirname}/migrations/*{.ts,.js}`],
 });

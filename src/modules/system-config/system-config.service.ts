@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Organization } from '../../entities/organization.entity';
 import { User } from '../../entities/user.entity';
 import { UpdateCompanyProfileDto } from './dto/update-company-profile.dto';
@@ -34,7 +34,6 @@ export class SystemConfigService {
     private readonly orgRepo: Repository<Organization>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
-    private readonly dataSource: DataSource,
   ) {}
 
   private readonly defaultBranding = {
@@ -42,8 +41,6 @@ export class SystemConfigService {
     primary: '30 58 138',
     accent: '20 184 166',
   };
-  private organizationSchemaReady = false;
-  private organizationSchemaPromise: Promise<void> | null = null;
 
   private parseCsv(input: string | undefined, fallback: string[]) {
     const parsed = String(input || '')
@@ -82,96 +79,6 @@ export class SystemConfigService {
       code: code.toUpperCase(),
       label: code.toUpperCase(),
     }));
-  }
-
-  private isOrganizationSchemaError(error: unknown) {
-    const message = String((error as any)?.message || '').toLowerCase();
-    return (
-      (message.includes('organization') && message.includes('does not exist')) ||
-      (message.includes('organizationid') && message.includes('does not exist')) ||
-      message.includes('no such table: organization') ||
-      message.includes('no such column: user.organizationid')
-    );
-  }
-
-  private async ensureOrganizationSchema() {
-    if (this.organizationSchemaReady) return;
-    if (this.organizationSchemaPromise) {
-      await this.organizationSchemaPromise;
-      return;
-    }
-
-    this.organizationSchemaPromise = (async () => {
-      await this.dataSource.query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";').catch(() => undefined);
-
-      await this.dataSource
-        .query(`
-          CREATE TABLE IF NOT EXISTS "organization" (
-            "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
-            "name" character varying NOT NULL DEFAULT 'MicroFinance Pro',
-            "primaryColor" character varying NOT NULL DEFAULT '30 58 138',
-            "accentColor" character varying NOT NULL DEFAULT '20 184 166',
-            "logoUrl" text,
-            "createdAt" TIMESTAMP NOT NULL DEFAULT now(),
-            "updatedAt" TIMESTAMP NOT NULL DEFAULT now(),
-            CONSTRAINT "PK_organization_id" PRIMARY KEY ("id")
-          );
-        `)
-        .catch(() => undefined);
-
-      await this.dataSource
-        .query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "organizationId" uuid`)
-        .catch(() => undefined);
-
-      await this.dataSource
-        .query(
-          'CREATE INDEX IF NOT EXISTS "IDX_user_organizationId" ON "user" ("organizationId");',
-        )
-        .catch(() => undefined);
-
-      await this.dataSource
-        .query(`
-          ALTER TABLE "user"
-          ADD CONSTRAINT "FK_user_organization"
-          FOREIGN KEY ("organizationId") REFERENCES "organization"("id")
-          ON DELETE SET NULL ON UPDATE NO ACTION;
-        `)
-        .catch(() => undefined);
-
-      await this.dataSource
-        .query(`
-          INSERT INTO "organization" ("name", "primaryColor", "accentColor", "logoUrl")
-          SELECT 'MicroFinance Pro', '30 58 138', '20 184 166', NULL
-          WHERE NOT EXISTS (SELECT 1 FROM "organization");
-        `)
-        .catch(() => undefined);
-
-      await this.dataSource
-        .query(`
-          UPDATE "user"
-          SET "organizationId" = (
-            SELECT "id" FROM "organization" ORDER BY "createdAt" ASC LIMIT 1
-          )
-          WHERE "organizationId" IS NULL;
-        `)
-        .catch(() => undefined);
-
-      this.organizationSchemaReady = true;
-    })().finally(() => {
-      this.organizationSchemaPromise = null;
-    });
-
-    await this.organizationSchemaPromise;
-  }
-
-  private async withOrganizationSchemaRetry<T>(run: () => Promise<T>) {
-    try {
-      return await run();
-    } catch (error) {
-      if (!this.isOrganizationSchemaError(error)) throw error;
-      await this.ensureOrganizationSchema();
-      return run();
-    }
   }
 
   private normalizeRgbTriplet(input: string, fallback: string) {
@@ -213,8 +120,6 @@ export class SystemConfigService {
   }
 
   private async resolveOrganizationForUser(user: any) {
-    await this.ensureOrganizationSchema();
-
     const userId = String(user?.id || '').trim();
     const tokenOrganizationId = String(user?.organization || '').trim();
 
@@ -247,194 +152,103 @@ export class SystemConfigService {
   }
 
   async getCompanyProfile(user: any) {
-    return this.withOrganizationSchemaRetry(async () => {
-      const organization = await this.resolveOrganizationForUser(user);
-      return this.mapCompanyProfile(organization);
-    });
+    const organization = await this.resolveOrganizationForUser(user);
+    return this.mapCompanyProfile(organization);
   }
 
   async updateCompanyProfile(user: any, updates: UpdateCompanyProfileDto) {
-    return this.withOrganizationSchemaRetry(async () => {
-      const organization = await this.resolveOrganizationForUser(user);
+    const organization = await this.resolveOrganizationForUser(user);
 
-      if (updates.companyName !== undefined) {
-        const trimmed = updates.companyName.trim();
-        if (trimmed.length > 0) {
-          organization.name = trimmed;
-        }
+    if (updates.companyName !== undefined) {
+      const trimmed = updates.companyName.trim();
+      if (trimmed.length > 0) {
+        organization.name = trimmed;
       }
+    }
 
-      if (updates.primary !== undefined) {
-        organization.primaryColor = this.normalizeRgbTriplet(
-          updates.primary,
-          organization.primaryColor || this.defaultBranding.primary,
-        );
-      }
+    if (updates.primary !== undefined) {
+      organization.primaryColor = this.normalizeRgbTriplet(
+        updates.primary,
+        organization.primaryColor || this.defaultBranding.primary,
+      );
+    }
 
-      if (updates.accent !== undefined) {
-        organization.accentColor = this.normalizeRgbTriplet(
-          updates.accent,
-          organization.accentColor || this.defaultBranding.accent,
-        );
-      }
+    if (updates.accent !== undefined) {
+      organization.accentColor = this.normalizeRgbTriplet(
+        updates.accent,
+        organization.accentColor || this.defaultBranding.accent,
+      );
+    }
 
-      if (updates.logo !== undefined) {
-        const logo = updates.logo.trim();
-        organization.logoUrl = logo.length > 0 ? logo : null;
-      }
+    if (updates.logo !== undefined) {
+      const logo = updates.logo.trim();
+      organization.logoUrl = logo.length > 0 ? logo : null;
+    }
 
-      const saved = await this.orgRepo.save(organization);
-      return this.mapCompanyProfile(saved);
-    });
+    const saved = await this.orgRepo.save(organization);
+    return this.mapCompanyProfile(saved);
   }
 
   getReportCatalog() {
+    // Curated for admins / top management — executive-level decision-making only.
+    // Operational, configuration and per-user reports are intentionally excluded.
     const reports: ReportCatalogItem[] = [
       {
         code: 'portfolio_summary',
         name: 'Portfolio Summary',
-        description: 'Portfolio balances, active/overdue/defaulted counts, PAR buckets.',
+        description:
+          'Executive snapshot: gross portfolio, status mix, PAR buckets, default and overdue rates.',
         endpoint: '/loans/portfolio/summary',
         format: 'pdf',
         type: 'portfolio',
-        roles: ['admin', 'manager', 'loan_officer', 'collector'],
-      },
-      {
-        code: 'loan_register',
-        name: 'Loan Register',
-        description: 'Detailed list of loans, status, terms, balances and branch ownership.',
-        endpoint: '/loans',
-        format: 'pdf',
-        type: 'portfolio',
-        roles: ['admin', 'manager', 'loan_officer', 'collector'],
-      },
-      {
-        code: 'collections_due_today',
-        name: 'Collections Due Today',
-        description:
-          'Installments due today for field collections, with client and branch details.',
-        endpoint: '/loans/collections/due-today',
-        format: 'pdf',
-        type: 'collections',
-        roles: ['admin', 'manager', 'loan_officer', 'collector'],
-      },
-      {
-        code: 'payments_register',
-        name: 'Payments Register',
-        description:
-          'Repayment transactions by date, amount, channel, branch and reconciliation status.',
-        endpoint: '/payments',
-        format: 'pdf',
-        type: 'financial',
-        roles: ['admin', 'manager', 'loan_officer', 'collector'],
-      },
-      {
-        code: 'clients_register',
-        name: 'Client Register',
-        description: 'Client master list with branch, risk/collection status and officer assignment.',
-        endpoint: '/clients',
-        format: 'pdf',
-        type: 'clients',
-        roles: ['admin', 'manager', 'loan_officer', 'collector'],
-      },
-      {
-        code: 'branch_directory',
-        name: 'Branch Directory',
-        description: 'Branch list for current user scope, including active status and management info.',
-        endpoint: '/branches',
-        format: 'pdf',
-        type: 'operations',
-        roles: ['admin', 'manager', 'loan_officer', 'collector'],
-      },
-      {
-        code: 'audit_log',
-        name: 'Audit Trail',
-        description: 'Recent audit log entries for compliance and operational oversight.',
-        endpoint: '/compliance/audit?limit=200',
-        format: 'pdf',
-        type: 'operations',
         roles: ['admin', 'manager'],
       },
       {
-        code: 'loan_products_catalog',
-        name: 'Loan Product Catalog',
-        description: 'Loan products, pricing and policy limits used by credit operations.',
-        endpoint: '/loan-products?includeInactive=true',
+        code: 'payments_register',
+        name: 'Cash Flow & Receipts',
+        description:
+          'Repayments collected — totals, daily trend, channel mix and reconciliation rate.',
+        endpoint: '/payments',
         format: 'pdf',
-        type: 'products',
-        roles: ['admin', 'manager', 'loan_officer', 'collector'],
-      },
-      {
-        code: 'credit_score_history',
-        name: 'Credit Score History',
-        description: 'Historical credit scoring outcomes for approved/scored applications.',
-        endpoint: '/credit/history',
-        format: 'pdf',
-        type: 'credit',
-        roles: ['admin', 'manager', 'loan_officer'],
-      },
-      {
-        code: 'credit_model_health',
-        name: 'Credit Model Health',
-        description: 'Operational health and output diagnostics for the scoring model.',
-        endpoint: '/credit/model-health',
-        format: 'pdf',
-        type: 'credit',
-        roles: ['admin', 'manager', 'loan_officer'],
+        type: 'financial',
+        roles: ['admin', 'manager'],
       },
       {
         code: 'regulatory_metrics',
-        name: 'Regulatory Metrics',
-        description: 'Compliance snapshot with PAR30, complaints, AML and KYC metrics.',
+        name: 'Compliance Health',
+        description:
+          'Board-level compliance snapshot: PAR 30, KYC verified rate, open complaints and AML events.',
         endpoint: '/compliance/metrics/regulatory',
         format: 'pdf',
         type: 'compliance',
         roles: ['admin', 'manager'],
       },
       {
-        code: 'complaints_register',
-        name: 'Complaints Register',
-        description: 'Customer complaints log with status tracking for service compliance.',
-        endpoint: '/compliance/complaints',
+        code: 'credit_score_history',
+        name: 'Origination Quality',
+        description: 'Credit score distribution for approved loans — lending discipline indicator.',
+        endpoint: '/credit/history',
         format: 'pdf',
-        type: 'compliance',
-        roles: ['admin', 'manager', 'loan_officer', 'collector'],
+        type: 'credit',
+        roles: ['admin', 'manager'],
       },
       {
         code: 'aml_events_register',
-        name: 'AML/CFT Events',
-        description: 'Suspicious activity and AML event log for compliance monitoring.',
+        name: 'AML / CFT Watchlist',
+        description: 'Suspicious activity and AML events — frequency and category breakdown.',
         endpoint: '/compliance/aml-events',
         format: 'pdf',
         type: 'compliance',
         roles: ['admin', 'manager'],
       },
       {
-        code: 'notification_queue',
-        name: 'Notification Delivery Queue',
-        description: 'Notification queue with status, retries and delivery outcomes.',
-        endpoint: '/notifications',
+        code: 'audit_log',
+        name: 'Governance & Audit',
+        description: 'Recent privileged actions across the system — for board oversight.',
+        endpoint: '/compliance/audit?limit=200',
         format: 'pdf',
-        type: 'notifications',
+        type: 'operations',
         roles: ['admin', 'manager'],
-      },
-      {
-        code: 'notification_templates',
-        name: 'Notification Templates',
-        description: 'Configured notification templates used for SMS/email/in-app communication.',
-        endpoint: '/notifications/templates?includeInactive=true',
-        format: 'pdf',
-        type: 'notifications',
-        roles: ['admin', 'manager'],
-      },
-      {
-        code: 'my_notifications',
-        name: 'My In-App Notifications',
-        description: 'In-app notification feed for the currently logged-in user.',
-        endpoint: '/notifications/my',
-        format: 'pdf',
-        type: 'notifications',
-        roles: ['admin', 'manager', 'loan_officer', 'collector'],
       },
     ];
 

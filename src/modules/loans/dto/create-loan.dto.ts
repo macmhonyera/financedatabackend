@@ -5,6 +5,11 @@ import { Type } from 'class-transformer';
 import { IsArray, IsBoolean } from 'class-validator';
 
 export class CreateLoanDto {
+  @ApiProperty({ required: false, description: 'Optional client-supplied key to deduplicate retries from offline mobile clients.' })
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
+
   @ApiProperty()
   @Type(() => Number)
   @IsNumber()

@@ -36,6 +36,11 @@ import { BorrowerMessage } from './entities/borrower-message.entity';
 import { PaymentPromise } from './entities/payment-promise.entity';
 import { RecoveryAction } from './entities/recovery-action.entity';
 import { AiRecoveryAgentModule } from './modules/ai-recovery-agent/ai-recovery-agent.module';
+import { SyncModule } from './modules/sync/sync.module';
+import { StorageModule } from './common/storage/storage.module';
+import { StorageHttpModule } from './modules/storage/storage.module';
+import { FieldVisit } from './entities/field-visit.entity';
+import { FieldVisitsModule } from './modules/field-visits/field-visits.module';
 
 function parseBoolean(value: string | undefined) {
   if (value === undefined) return undefined;
@@ -84,6 +89,7 @@ const useSsl = parseBoolean(process.env.DATABASE_SSL) ?? (hasSupabaseHost || has
         BorrowerMessage,
         PaymentPromise,
         RecoveryAction,
+        FieldVisit,
       ],
       synchronize: process.env.NODE_ENV !== 'production',
       logging: false,
@@ -102,6 +108,10 @@ const useSsl = parseBoolean(process.env.DATABASE_SSL) ?? (hasSupabaseHost || has
     BranchesModule,
     SystemConfigModule,
     AiRecoveryAgentModule,
+    SyncModule,
+    StorageModule,
+    StorageHttpModule,
+    FieldVisitsModule,
   ],
   providers: [RolesGuard],
 })

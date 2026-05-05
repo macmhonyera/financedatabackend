@@ -1,7 +1,7 @@
-import { Controller, Get, Post, Body, Param, Put, UseGuards, Req, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Put, UseGuards, Req, Query, Headers } from '@nestjs/common';
 import { LoansService } from './loans.service';
 import { AuthGuard } from '@nestjs/passport';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiBody } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiBody, ApiHeader } from '@nestjs/swagger';
 import { Roles } from '../../common/roles.decorator';
 import { RolesGuard } from '../../common/roles.guard';
 import { CreateLoanDto } from './dto/create-loan.dto';
@@ -57,6 +57,7 @@ export class LoansController {
   create(@Req() req: any, @Body() body: CreateLoanDto) {
     return this.svc.create(
       {
+        idempotencyKey: body.idempotencyKey,
         amount: body.amount,
         balance: body.amount,
         client: { id: body.clientId } as any,
@@ -78,23 +79,38 @@ export class LoansController {
   @Put(':id')
   @ApiOperation({ summary: 'Update loan (admin/manager)' })
   @ApiBody({ type: UpdateLoanDto })
+  @ApiHeader({ name: 'If-Match', required: false, description: 'Optional: loan.updatedAt of last seen state. Returns 409 if stale.' })
   @ApiResponse({ status: 200, description: 'Loan updated' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
-  update(@Req() req: any, @Param('id') id: string, @Body() body: UpdateLoanDto) {
-    return this.svc.updateScoped(id, body as any, req.user);
+  @ApiResponse({ status: 409, description: 'Conflict (stale If-Match)' })
+  update(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: UpdateLoanDto,
+    @Headers('if-match') ifMatch?: string,
+  ) {
+    return this.svc.updateScoped(id, body as any, req.user, ifMatch);
   }
 
   @UseGuards(RolesGuard)
   @Roles('admin')
   @Post(':id/approve')
   @ApiOperation({ summary: 'Approve loan (admin only)' })
+  @ApiHeader({ name: 'If-Match', required: false, description: 'Optional: loan.updatedAt of last seen state. Returns 409 if stale.' })
   @ApiResponse({ status: 200, description: 'Loan approved' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
-  approve(@Req() req: any, @Param('id') id: string, @Body() body: ApproveLoanDto) {
+  @ApiResponse({ status: 409, description: 'Conflict (stale If-Match)' })
+  approve(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: ApproveLoanDto,
+    @Headers('if-match') ifMatch?: string,
+  ) {
     return this.svc.setStatusScoped(id, 'active', req.user, {
       disbursedAt: body?.disbursedAt,
+      ifMatch,
     });
   }
 
@@ -102,12 +118,20 @@ export class LoansController {
   @Roles('admin')
   @Post(':id/reject')
   @ApiOperation({ summary: 'Reject loan (admin only)' })
+  @ApiHeader({ name: 'If-Match', required: false, description: 'Optional: loan.updatedAt of last seen state. Returns 409 if stale.' })
   @ApiResponse({ status: 200, description: 'Loan rejected' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
-  reject(@Req() req: any, @Param('id') id: string, @Body() body: RejectLoanDto) {
+  @ApiResponse({ status: 409, description: 'Conflict (stale If-Match)' })
+  reject(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: RejectLoanDto,
+    @Headers('if-match') ifMatch?: string,
+  ) {
     return this.svc.setStatusScoped(id, 'rejected', req.user, {
       reason: body?.reason,
+      ifMatch,
     });
   }
 

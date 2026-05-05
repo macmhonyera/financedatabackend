@@ -1,8 +1,8 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
 import { ClientsService } from './clients.service';
 import { AuthGuard } from '@nestjs/passport';
 import { CreateClientDto } from './dto/create-client.dto';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiHeader } from '@nestjs/swagger';
 import { Roles } from '../../common/roles.decorator';
 import { RolesGuard } from '../../common/roles.guard';
 import { UploadClientDocumentDto } from './dto/upload-client-document.dto';
@@ -48,6 +48,7 @@ export class ClientsController {
   @ApiResponse({ status: 403, description: 'Forbidden' })
   create(@Req() req: any, @Body() body: CreateClientDto) {
     const payload: any = {
+      idempotencyKey: body.idempotencyKey,
       name: body.name,
       phone: body.phone,
       email: body.email,
@@ -105,16 +106,23 @@ export class ClientsController {
   @Roles('admin', 'manager', 'loan_officer')
   @Put(':id')
   @ApiOperation({ summary: 'Update a client (admin/manager/loan_officer)' })
+  @ApiHeader({ name: 'If-Match', required: false, description: 'Optional: client.updatedAt of last seen state. Returns 409 if stale.' })
   @ApiResponse({ status: 200, description: 'Client updated' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
-  update(@Req() req: any, @Param('id') id: string, @Body() body: Partial<CreateClientDto>) {
+  @ApiResponse({ status: 409, description: 'Conflict (stale If-Match)' })
+  update(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: Partial<CreateClientDto>,
+    @Headers('if-match') ifMatch?: string,
+  ) {
     const payload: any = { ...body };
     if (payload.branchId) {
       payload.branch = { id: payload.branchId };
       delete payload.branchId;
     }
-    return this.svc.updateScoped(id, payload as any, req.user);
+    return this.svc.updateScoped(id, payload as any, req.user, ifMatch);
   }
 
   @UseGuards(RolesGuard)

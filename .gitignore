@@ -66,3 +66,6 @@ Thumbs.db
 # Optional: Python dotenv (if your microservice uses it separately)
 *.env
 .vercel
+
+# Local FS object storage (dev). Production uses S3-compatible storage.
+/storage/

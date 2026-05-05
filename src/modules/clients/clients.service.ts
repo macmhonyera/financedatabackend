@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { DataSource, Repository } from 'typeorm';
 import { Client, ClientDocumentRecord, ClientDocumentType } from '../../entities/client.entity';
 import { UploadClientDocumentDto } from './dto/upload-client-document.dto';
+import { assertIfMatch } from '../../common/precondition';
 
 @Injectable()
 export class ClientsService {
@@ -25,8 +26,16 @@ export class ClientsService {
   private readonly profilePhotoMaxSizeBytes = 1 * 1024 * 1024;
   private readonly documentMaxSizeBytes = 6 * 1024 * 1024;
 
-  create(data: Partial<Client>) {
-    const e = this.repo.create(data as any);
+  async create(data: Partial<Client>) {
+    const idempotencyKey = (data as any).idempotencyKey?.trim();
+    if (idempotencyKey) {
+      const existing = await this.repo.findOne({
+        where: { idempotencyKey } as any,
+        relations: ['branch', 'loans'],
+      });
+      if (existing) return existing;
+    }
+    const e = this.repo.create({ ...(data as any), idempotencyKey: idempotencyKey || undefined });
     return this.repo.save(e);
   }
 
@@ -61,8 +70,9 @@ export class ClientsService {
     return this.findById(id);
   }
 
-  async updateScoped(id: string, updates: Partial<Client>, user: any) {
-    await this.findByIdScoped(id, user);
+  async updateScoped(id: string, updates: Partial<Client>, user: any, ifMatch?: string) {
+    const existing = await this.findByIdScoped(id, user);
+    assertIfMatch(ifMatch, existing.updatedAt, existing);
     await this.repo.update(id, updates as any);
     return this.findById(id);
   }
@@ -134,11 +144,13 @@ export class ClientsService {
       .filter((row) => row && typeof row === 'object')
       .map((row: any) => ({
         id: String(row.id || ''),
+        idempotencyKey: row.idempotencyKey ? String(row.idempotencyKey) : undefined,
         documentType: String(row.documentType || 'other') as ClientDocumentType,
         documentName: String(row.documentName || 'document'),
         mimeType: String(row.mimeType || 'application/octet-stream'),
         sizeBytes: Number(row.sizeBytes || 0),
-        dataUrl: String(row.dataUrl || ''),
+        dataUrl: row.dataUrl ? String(row.dataUrl) : undefined,
+        storageKey: row.storageKey ? String(row.storageKey) : undefined,
         documentNumber: row.documentNumber ? String(row.documentNumber) : undefined,
         expiryDate: row.expiryDate ? String(row.expiryDate) : undefined,
         notes: row.notes ? String(row.notes) : undefined,
@@ -146,7 +158,7 @@ export class ClientsService {
         uploadedByUserId: row.uploadedByUserId ? String(row.uploadedByUserId) : undefined,
         uploadedByName: row.uploadedByName ? String(row.uploadedByName) : undefined,
       }))
-      .filter((row) => row.id && row.dataUrl);
+      .filter((row) => row.id && (row.dataUrl || row.storageKey));
   }
 
   private extensionByMimeType(mimeType: string) {
@@ -196,28 +208,57 @@ export class ClientsService {
   async uploadDocumentScoped(clientId: string, dto: UploadClientDocumentDto, user: any) {
     await this.findByIdScoped(clientId, user);
 
-    const parsed = this.parseDataUrl(dto.dataUrl);
-    if (!this.allowedDocumentMimeTypes.has(parsed.mimeType)) {
-      throw new BadRequestException('Only PDF/JPG/PNG/WEBP documents are allowed.');
-    }
-
-    const sizeBytes = this.estimateSizeBytes(parsed.base64Data);
-    if (sizeBytes > this.documentMaxSizeBytes) {
-      throw new BadRequestException('Document file is too large. Maximum size is 6MB.');
-    }
-
     const client = await this.findByIdWithDocuments(clientId);
     if (!client) throw new NotFoundException('Client not found');
 
     const currentDocuments = this.normalizeDocumentList((client as any).documents);
+
+    const idempotencyKey = dto.idempotencyKey?.trim();
+    if (idempotencyKey) {
+      const existing = currentDocuments.find((doc) => doc.idempotencyKey === idempotencyKey);
+      if (existing) return existing;
+    }
+
+    let mimeType: string;
+    let sizeBytes: number;
+    let dataUrl: string | undefined;
+    let storageKey: string | undefined;
+
+    if (dto.storageKey) {
+      storageKey = dto.storageKey;
+      mimeType = String(dto.mimeType || '').toLowerCase();
+      sizeBytes = Number(dto.sizeBytes || 0);
+      if (!this.allowedDocumentMimeTypes.has(mimeType)) {
+        throw new BadRequestException('Only PDF/JPG/PNG/WEBP documents are allowed.');
+      }
+      if (sizeBytes <= 0 || sizeBytes > this.documentMaxSizeBytes) {
+        throw new BadRequestException('Document size must be 1B-6MB.');
+      }
+    } else if (dto.dataUrl) {
+      const parsed = this.parseDataUrl(dto.dataUrl);
+      if (!this.allowedDocumentMimeTypes.has(parsed.mimeType)) {
+        throw new BadRequestException('Only PDF/JPG/PNG/WEBP documents are allowed.');
+      }
+      sizeBytes = this.estimateSizeBytes(parsed.base64Data);
+      if (sizeBytes > this.documentMaxSizeBytes) {
+        throw new BadRequestException('Document file is too large. Maximum size is 6MB.');
+      }
+      mimeType = parsed.mimeType;
+      dataUrl = parsed.normalizedDataUrl;
+    } else {
+      throw new BadRequestException('Provide either dataUrl or storageKey.');
+    }
+
     const uploadedAt = new Date().toISOString();
     const savedDoc: ClientDocumentRecord = {
       id: randomUUID(),
+      idempotencyKey: idempotencyKey || undefined,
       documentType: dto.documentType,
-      documentName: this.resolveDocumentName(dto.documentType, dto.documentName, parsed.mimeType),
-      mimeType: parsed.mimeType,
+      documentName: this.resolveDocumentName(dto.documentType, dto.documentName, mimeType),
+      mimeType,
       sizeBytes,
-      dataUrl: parsed.normalizedDataUrl,
+      dataUrl,
+      storageKey,
       documentNumber: dto.documentNumber?.trim() || undefined,
       expiryDate: dto.expiryDate,
       notes: dto.notes?.trim() || undefined,
