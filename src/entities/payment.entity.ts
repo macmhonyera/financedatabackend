@@ -49,6 +49,22 @@ export class Payment {
   @Column({ nullable: true })
   receiptImageKey?: string;
 
+  /** Base64 data URL of the receipt photo (handwritten or printed). */
+  @Column({ type: 'text', nullable: true })
+  receiptDataUrl?: string;
+
+  /** Auto-generated receipt number, unique across the org. */
+  @Column({ type: 'varchar', length: 32, nullable: true, unique: true })
+  receiptNumber?: string;
+
+  /** User id of the officer who recorded the payment. */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  issuedByUserId?: string;
+
+  /** Display name of the officer who recorded the payment (denormalized for receipts). */
+  @Column({ type: 'varchar', length: 200, nullable: true })
+  issuedByName?: string;
+
   @CreateDateColumn()
   createdAt: Date;
 

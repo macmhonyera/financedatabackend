@@ -1,10 +1,37 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
 import { DataSource, Repository } from 'typeorm';
 import { Client, ClientDocumentRecord, ClientDocumentType } from '../../entities/client.entity';
 import { UploadClientDocumentDto } from './dto/upload-client-document.dto';
 import { assertIfMatch } from '../../common/precondition';
+
+const normalizePhone = (raw: string | undefined | null): string => {
+  if (!raw) return '';
+  const digits = String(raw).replace(/\D+/g, '');
+  // Zimbabwean local trunk-prefix form: "0XX XXX XXXX" → drop leading 0
+  if (digits.length === 10 && digits.startsWith('0')) return digits.slice(1);
+  // International with country code: "263XX XXX XXXX" → drop 263
+  if (digits.length === 12 && digits.startsWith('263')) return digits.slice(3);
+  return digits;
+};
+
+const normalizeEmail = (raw: string | undefined | null): string => {
+  if (!raw) return '';
+  return String(raw).trim().toLowerCase();
+};
+
+const normalizeIdNumber = (raw: string | undefined | null): string => {
+  if (!raw) return '';
+  // Strip whitespace, hyphens, underscores so "AB 12 34", "AB-1234", "ab_1234" all match.
+  return String(raw).replace(/[\s\-_]+/g, '').toUpperCase();
+};
 
 @Injectable()
 export class ClientsService {
@@ -26,7 +53,106 @@ export class ClientsService {
   private readonly profilePhotoMaxSizeBytes = 1 * 1024 * 1024;
   private readonly documentMaxSizeBytes = 6 * 1024 * 1024;
 
-  async create(data: Partial<Client>) {
+  /**
+   * Look for an existing client across ALL branches matching any of the uniqueness
+   * fields (national ID, phone, email). Returns the first match, normalized to
+   * a friendly { field, client } object so callers can build a helpful message.
+   */
+  private async findDuplicate(
+    data: Partial<Client>,
+    excludeId?: string,
+  ): Promise<{ field: 'idNumber' | 'phone' | 'email'; client: Client } | null> {
+    const id = normalizeIdNumber(data.idNumber);
+    const phone = normalizePhone(data.phone);
+    const email = normalizeEmail(data.email);
+    if (!id && !phone && !email) return null;
+
+    const qb = this.repo
+      .createQueryBuilder('client')
+      .leftJoinAndSelect('client.branch', 'branch')
+      .where('1 = 0');
+
+    if (id) {
+      qb.orWhere(
+        // Strip whitespace + uppercase before comparing so "AB 12 34" === "ab1234"
+        `UPPER(REPLACE(REPLACE(REPLACE(COALESCE(client.idNumber, ''), ' ', ''), '-', ''), '_', '')) = :id`,
+        { id },
+      );
+    }
+    if (phone) {
+      // Apply the same Zimbabwe-aware normalization in SQL so "+263 77 1234567",
+      // "0771234567", and "+263771234567" all collide.
+      qb.orWhere(
+        `CASE
+           WHEN length(regexp_replace(COALESCE(client.phone, ''), '[^0-9]', '', 'g')) = 10
+                AND regexp_replace(COALESCE(client.phone, ''), '[^0-9]', '', 'g') LIKE '0%'
+             THEN substring(regexp_replace(COALESCE(client.phone, ''), '[^0-9]', '', 'g'), 2)
+           WHEN length(regexp_replace(COALESCE(client.phone, ''), '[^0-9]', '', 'g')) = 12
+                AND regexp_replace(COALESCE(client.phone, ''), '[^0-9]', '', 'g') LIKE '263%'
+             THEN substring(regexp_replace(COALESCE(client.phone, ''), '[^0-9]', '', 'g'), 4)
+           ELSE regexp_replace(COALESCE(client.phone, ''), '[^0-9]', '', 'g')
+         END = :phone`,
+        { phone },
+      );
+    }
+    if (email) {
+      qb.orWhere('LOWER(COALESCE(client.email, \'\')) = :email', { email });
+    }
+
+    if (excludeId) {
+      qb.andWhere('client.id != :excludeId', { excludeId });
+    }
+
+    const candidate = await qb.getOne();
+    if (!candidate) return null;
+
+    // Pick the field that actually matched so we can tell the officer which one.
+    if (id && normalizeIdNumber(candidate.idNumber) === id) {
+      return { field: 'idNumber', client: candidate };
+    }
+    if (phone && normalizePhone(candidate.phone) === phone) {
+      return { field: 'phone', client: candidate };
+    }
+    return { field: 'email', client: candidate };
+  }
+
+  private throwDuplicate(
+    match: { field: 'idNumber' | 'phone' | 'email'; client: Client },
+    user: any,
+  ): never {
+    const fieldLabel = match.field === 'idNumber' ? 'national ID' : match.field;
+    const sameBranch =
+      user?.role === 'admin' ||
+      ((match.client.branch as any)?.id && (match.client.branch as any).id === user?.branch);
+
+    if (sameBranch) {
+      // The officer can already see this client — give them everything they need
+      // to navigate to it.
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'DuplicateClient',
+        message: `A client with this ${fieldLabel} already exists at your branch: ${match.client.name}.`,
+        field: match.field,
+        clientId: match.client.id,
+        clientName: match.client.name,
+        sameBranch: true,
+        branchName: (match.client.branch as any)?.name || null,
+      });
+    }
+
+    // Cross-branch duplicate: signal the officer to escalate to admin without
+    // leaking the other branch's client details.
+    throw new ConflictException({
+      statusCode: 409,
+      error: 'DuplicateClient',
+      message: `A client with this ${fieldLabel} is already registered at another branch (${(match.client.branch as any)?.name || 'unknown'}). Contact your administrator to transfer or merge the record.`,
+      field: match.field,
+      sameBranch: false,
+      branchName: (match.client.branch as any)?.name || null,
+    });
+  }
+
+  async create(data: Partial<Client>, user?: any) {
     const idempotencyKey = (data as any).idempotencyKey?.trim();
     if (idempotencyKey) {
       const existing = await this.repo.findOne({
@@ -35,6 +161,10 @@ export class ClientsService {
       });
       if (existing) return existing;
     }
+
+    const duplicate = await this.findDuplicate(data);
+    if (duplicate) this.throwDuplicate(duplicate, user);
+
     const e = this.repo.create({ ...(data as any), idempotencyKey: idempotencyKey || undefined });
     return this.repo.save(e);
   }
@@ -73,7 +203,36 @@ export class ClientsService {
   async updateScoped(id: string, updates: Partial<Client>, user: any, ifMatch?: string) {
     const existing = await this.findByIdScoped(id, user);
     assertIfMatch(ifMatch, existing.updatedAt, existing);
-    await this.repo.update(id, updates as any);
+
+    // Only run duplicate detection if a uniqueness field is actually being changed,
+    // and only against OTHER clients (excludeId = current).
+    const changesUnique =
+      (updates.idNumber !== undefined && normalizeIdNumber(updates.idNumber) !== normalizeIdNumber(existing.idNumber)) ||
+      (updates.phone !== undefined && normalizePhone(updates.phone) !== normalizePhone(existing.phone)) ||
+      (updates.email !== undefined && normalizeEmail(updates.email) !== normalizeEmail(existing.email));
+
+    if (changesUnique) {
+      const dup = await this.findDuplicate(
+        {
+          idNumber: updates.idNumber ?? existing.idNumber,
+          phone: updates.phone ?? existing.phone,
+          email: updates.email ?? existing.email,
+        } as Partial<Client>,
+        id,
+      );
+      if (dup) this.throwDuplicate(dup, user);
+    }
+
+    const editorId = (user?.id as string | undefined) || undefined;
+    const editorName =
+      (user?.name as string | undefined) || (user?.email as string | undefined) || undefined;
+    const stamped: any = {
+      ...updates,
+      lastUpdatedByUserId: editorId,
+      lastUpdatedByName: editorName,
+    };
+
+    await this.repo.update(id, stamped);
     return this.findById(id);
   }
 

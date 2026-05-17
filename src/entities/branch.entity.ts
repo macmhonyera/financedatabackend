@@ -13,6 +13,15 @@ export class Branch {
   @Column({ default: true })
   active: boolean;
 
+  @Column({ nullable: true })
+  address?: string;
+
+  @Column({ nullable: true })
+  phone?: string;
+
+  @Column({ nullable: true })
+  manager?: string;
+
   @OneToMany(() => User, (u) => u.branch)
   users: User[];
 

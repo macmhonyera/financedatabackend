@@ -41,6 +41,16 @@ export class ClientAsset {
   @Column({ type: 'text', nullable: true })
   notes?: string;
 
+  /** Base64 data URL of the asset photo (image/jpeg or image/png). */
+  @Column({ type: 'text', nullable: true })
+  photoDataUrl?: string;
+
+  @Column({ type: 'varchar', length: 200, nullable: true })
+  photoCapturedBy?: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  photoCapturedAt?: Date;
+
   @CreateDateColumn()
   createdAt: Date;
 

@@ -24,11 +24,15 @@ export class AuthService {
     if (!password) throw new UnauthorizedException('Invalid credentials');
     const user = await this.users.findByEmail(email);
     if (!user || !user.passwordHash) throw new UnauthorizedException('Invalid credentials');
+    if ((user as any).active === false) {
+      throw new UnauthorizedException('This account has been deactivated. Contact your administrator.');
+    }
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) throw new UnauthorizedException('Invalid credentials');
     const payload = {
       sub: user.id,
       email: user.email,
+      name: user.name,
       role: user.role,
       branch: user.branch?.id,
       organization: user.organization?.id,

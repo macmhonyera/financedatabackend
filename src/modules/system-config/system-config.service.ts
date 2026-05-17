@@ -4,6 +4,83 @@ import { Repository } from 'typeorm';
 import { Organization } from '../../entities/organization.entity';
 import { User } from '../../entities/user.entity';
 import { UpdateCompanyProfileDto } from './dto/update-company-profile.dto';
+import { UpdateSystemSettingsDto } from './dto/update-system-settings.dto';
+
+export type LateFeeModel = 'flat' | 'percent_of_installment' | 'percent_of_balance';
+
+export type SystemSettings = {
+  general: {
+    defaultCurrency: string;
+    workingDays: string[];
+    workingHours: { start: string; end: string };
+    timezone: string;
+    fiscalYearStartMonth: number;
+  };
+  penalties: {
+    gracePeriodDays: number;
+    lateFeeModel: LateFeeModel;
+    lateFeeAmount: number;
+    lateFeePercent: number;
+    penaltyInterestAnnualPercent: number;
+    capLateFeesAtInstallment: boolean;
+  };
+  approval: {
+    autoApproveUnder: number;
+    managerApprovalUnder: number;
+    directorApprovalAbove: number;
+    requireDualApproval: boolean;
+  };
+  provisioning: {
+    par1to30Percent: number;
+    par31to60Percent: number;
+    par61to90Percent: number;
+    par90PlusPercent: number;
+  };
+  notifications: {
+    channels: { sms: boolean; whatsapp: boolean; email: boolean };
+    reminderDaysBeforeDue: number[];
+    overdueReminderCadenceDays: number;
+    aiRecoveryEnabled: boolean;
+  };
+  holidays: string[];
+};
+
+const DEFAULT_SETTINGS: SystemSettings = {
+  general: {
+    defaultCurrency: 'USD',
+    workingDays: ['mon', 'tue', 'wed', 'thu', 'fri'],
+    workingHours: { start: '08:00', end: '17:00' },
+    timezone: 'Africa/Harare',
+    fiscalYearStartMonth: 1,
+  },
+  penalties: {
+    gracePeriodDays: 3,
+    lateFeeModel: 'percent_of_installment',
+    lateFeeAmount: 0,
+    lateFeePercent: 5,
+    penaltyInterestAnnualPercent: 24,
+    capLateFeesAtInstallment: true,
+  },
+  approval: {
+    autoApproveUnder: 0,
+    managerApprovalUnder: 5000,
+    directorApprovalAbove: 5000,
+    requireDualApproval: false,
+  },
+  provisioning: {
+    par1to30Percent: 5,
+    par31to60Percent: 25,
+    par61to90Percent: 50,
+    par90PlusPercent: 100,
+  },
+  notifications: {
+    channels: { sms: true, whatsapp: true, email: false },
+    reminderDaysBeforeDue: [3, 1],
+    overdueReminderCadenceDays: 3,
+    aiRecoveryEnabled: true,
+  },
+  holidays: [],
+};
 
 type ReportRole = 'admin' | 'manager' | 'loan_officer' | 'collector';
 type ReportType =
@@ -187,6 +264,84 @@ export class SystemConfigService {
 
     const saved = await this.orgRepo.save(organization);
     return this.mapCompanyProfile(saved);
+  }
+
+  private mergeSettings(stored: Record<string, unknown> | null | undefined): SystemSettings {
+    const safeStored = (stored && typeof stored === 'object' ? stored : {}) as Record<string, any>;
+    const merged: SystemSettings = {
+      general: {
+        ...DEFAULT_SETTINGS.general,
+        ...(safeStored.general || {}),
+        workingHours: {
+          ...DEFAULT_SETTINGS.general.workingHours,
+          ...((safeStored.general && safeStored.general.workingHours) || {}),
+        },
+        workingDays: Array.isArray(safeStored.general?.workingDays)
+          ? safeStored.general.workingDays
+          : DEFAULT_SETTINGS.general.workingDays,
+      },
+      penalties: { ...DEFAULT_SETTINGS.penalties, ...(safeStored.penalties || {}) },
+      approval: { ...DEFAULT_SETTINGS.approval, ...(safeStored.approval || {}) },
+      provisioning: { ...DEFAULT_SETTINGS.provisioning, ...(safeStored.provisioning || {}) },
+      notifications: {
+        ...DEFAULT_SETTINGS.notifications,
+        ...(safeStored.notifications || {}),
+        channels: {
+          ...DEFAULT_SETTINGS.notifications.channels,
+          ...((safeStored.notifications && safeStored.notifications.channels) || {}),
+        },
+        reminderDaysBeforeDue: Array.isArray(safeStored.notifications?.reminderDaysBeforeDue)
+          ? safeStored.notifications.reminderDaysBeforeDue
+          : DEFAULT_SETTINGS.notifications.reminderDaysBeforeDue,
+      },
+      holidays: Array.isArray(safeStored.holidays) ? safeStored.holidays : [],
+    };
+    return merged;
+  }
+
+  async getSystemSettings(user: any) {
+    const organization = await this.resolveOrganizationForUser(user);
+    return this.mergeSettings(organization.settings as Record<string, unknown> | null | undefined);
+  }
+
+  async updateSystemSettings(user: any, dto: UpdateSystemSettingsDto) {
+    const organization = await this.resolveOrganizationForUser(user);
+    const current = this.mergeSettings(organization.settings as Record<string, unknown> | null | undefined);
+
+    const next: SystemSettings = {
+      general: {
+        ...current.general,
+        ...(dto.general || {}),
+        workingHours: {
+          ...current.general.workingHours,
+          ...((dto.general && dto.general.workingHours) || {}),
+        },
+        workingDays: dto.general?.workingDays ?? current.general.workingDays,
+      },
+      penalties: {
+        ...current.penalties,
+        ...(dto.penalties || {}),
+        lateFeeModel: ((dto.penalties?.lateFeeModel as LateFeeModel | undefined) ??
+          current.penalties.lateFeeModel),
+      },
+      approval: { ...current.approval, ...(dto.approval || {}) },
+      provisioning: { ...current.provisioning, ...(dto.provisioning || {}) },
+      notifications: {
+        ...current.notifications,
+        ...(dto.notifications || {}),
+        channels: {
+          ...current.notifications.channels,
+          ...((dto.notifications && dto.notifications.channels) || {}),
+        },
+        reminderDaysBeforeDue:
+          dto.notifications?.reminderDaysBeforeDue ?? current.notifications.reminderDaysBeforeDue,
+      },
+      holidays: dto.holidays ?? current.holidays,
+    };
+
+    organization.settings = next as unknown as Record<string, unknown>;
+    await this.orgRepo.save(organization);
+    return next;
   }
 
   getReportCatalog() {

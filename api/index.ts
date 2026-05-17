@@ -4,6 +4,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ExpressAdapter } from '@nestjs/platform-express';
 import { AppModule } from '../src/app.module';
+import { buildCorsOptions } from '../src/common/cors';
 
 const express = require('express');
 const server = express();
@@ -23,14 +24,7 @@ async function bootstrap() {
         }),
       );
 
-      const corsOrigins = (process.env.CORS_ORIGINS || '')
-        .split(',')
-        .map((value: string) => value.trim())
-        .filter((value: string) => value.length > 0);
-      app.enableCors({
-        origin: corsOrigins.length > 0 ? corsOrigins : true,
-        credentials: true,
-      });
+      app.enableCors(buildCorsOptions());
 
       try {
         const morgan = require('morgan');

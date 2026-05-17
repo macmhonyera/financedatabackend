@@ -92,6 +92,10 @@ const useSsl = parseBoolean(process.env.DATABASE_SSL) ?? (hasSupabaseHost || has
         FieldVisit,
       ],
       synchronize: process.env.NODE_ENV !== 'production',
+      // Apply pending migrations on boot so production deploys self-heal.
+      // Existing migrations use IF NOT EXISTS / hasColumn guards so this is idempotent.
+      migrations: [__dirname + '/migrations/*.{ts,js}'],
+      migrationsRun: process.env.NODE_ENV === 'production',
       logging: false,
     }),
     AuthModule,

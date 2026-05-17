@@ -110,6 +110,20 @@ export class PaymentsService {
 
       const branchId = loanBranchId || (data as any).branch || user?.branch;
       const isInstantlyReconciled = rawChannel === 'cash';
+      const receiptDataUrl = (data as any).receiptDataUrl as string | undefined;
+      if (receiptDataUrl) {
+        const base64Part = receiptDataUrl.split(',')[1] || '';
+        const approxBytes = Math.floor(base64Part.length * 0.75);
+        if (approxBytes > 3 * 1024 * 1024) {
+          throw new BadRequestException(
+            'Receipt photo is too large. Please use an image under 3MB.',
+          );
+        }
+      }
+      const officerName =
+        (user?.name as string | undefined) || (user?.email as string | undefined) || undefined;
+      const officerId = (user?.id as string | undefined) || undefined;
+
       const payment = paymentRepo.create({
         amount,
         loan: { id: loanId } as any,
@@ -120,6 +134,10 @@ export class PaymentsService {
         channel: rawChannel || undefined,
         metadata: (data as any).metadata,
         receiptImageKey: (data as any).receiptImageKey || undefined,
+        receiptDataUrl,
+        receiptNumber: this.buildReceiptNumber(),
+        issuedByUserId: officerId,
+        issuedByName: officerName,
         reconciliationStatus: isInstantlyReconciled ? 'reconciled' : 'pending',
         reconciledAt: isInstantlyReconciled ? new Date() : undefined,
       } as any);
@@ -266,5 +284,126 @@ export class PaymentsService {
     payment.reconciliationStatus = status as any;
     payment.reconciledAt = status === 'reconciled' ? new Date() : null as any;
     return this.repo.save(payment);
+  }
+
+  private buildReceiptNumber(): string {
+    const now = new Date();
+    const yyyymmdd =
+      now.getUTCFullYear().toString() +
+      String(now.getUTCMonth() + 1).padStart(2, '0') +
+      String(now.getUTCDate()).padStart(2, '0');
+    // Random 6-char A-Z0-9 segment for uniqueness within the day
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let suffix = '';
+    for (let i = 0; i < 6; i++) {
+      suffix += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+    }
+    return `RCT-${yyyymmdd}-${suffix}`;
+  }
+
+  private escapeHtml(value: string): string {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  async renderReceipt(id: string, user: any): Promise<string> {
+    const payment = await this.repo.findOne({
+      where: { id },
+      relations: ['client', 'client.branch', 'loan'],
+    });
+    if (!payment) throw new NotFoundException('Payment not found');
+
+    const branchId = ((payment.client as any)?.branch as any)?.id || payment.branch;
+    if (user?.role !== 'admin' && user?.branch && branchId && branchId !== user.branch) {
+      throw new ForbiddenException('You are not allowed to view this payment');
+    }
+
+    const esc = (v: string | undefined | null) => this.escapeHtml(String(v ?? '—'));
+    const amountFmt = Number(payment.amount).toFixed(2);
+    const branchName =
+      ((payment.client as any)?.branch as any)?.name || payment.branch || 'Branch';
+    const clientName = (payment.client as any)?.name || '—';
+    const loanIdShort = ((payment.loan as any)?.id || '').slice(0, 8);
+    const issuedAt = (payment.createdAt instanceof Date
+      ? payment.createdAt
+      : new Date(payment.createdAt)
+    ).toLocaleString('en-GB');
+    const channel = payment.channel
+      ? payment.channel.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+      : '—';
+
+    return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Receipt ${esc(payment.receiptNumber)}</title>
+<style>
+  *{box-sizing:border-box}
+  body{font-family:'Helvetica Neue',Arial,sans-serif;background:#f3f4f6;margin:0;color:#111827}
+  .wrap{max-width:560px;margin:24px auto;padding:24px;background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  h1{font-size:20px;margin:0 0 4px}
+  .muted{color:#6b7280;font-size:12px}
+  .num{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#f9fafb;border:1px solid #e5e7eb;padding:6px 10px;border-radius:6px;display:inline-block;font-size:13px}
+  .row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:14px}
+  .row:last-child{border-bottom:0}
+  .label{color:#6b7280}
+  .value{color:#111827;font-weight:500}
+  .total{margin-top:12px;padding:12px;border-radius:6px;background:#f0fdf4;border:1px solid #bbf7d0;text-align:right}
+  .total .lbl{font-size:11px;color:#16a34a;letter-spacing:.06em;text-transform:uppercase}
+  .total .amt{font-size:28px;font-weight:700;color:#166534}
+  .signoff{margin-top:24px;display:flex;justify-content:space-between;font-size:12px;color:#374151}
+  .signoff .name{font-weight:600;color:#111827}
+  .actions{margin-top:16px;text-align:center}
+  .actions button{background:#1e3a8a;color:#fff;border:0;padding:10px 18px;border-radius:6px;font-weight:600;cursor:pointer}
+  @media print {.actions{display:none} body{background:#fff} .wrap{box-shadow:none;margin:0}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
+    <div>
+      <h1>Payment receipt</h1>
+      <p class="muted">${esc(branchName)} · ${esc(issuedAt)}</p>
+    </div>
+    <span class="num">${esc(payment.receiptNumber)}</span>
+  </div>
+
+  <div class="row"><span class="label">Client</span><span class="value">${esc(clientName)}</span></div>
+  <div class="row"><span class="label">Loan</span><span class="value">#${esc(loanIdShort)}</span></div>
+  <div class="row"><span class="label">Channel</span><span class="value">${esc(channel)}</span></div>
+  ${payment.externalReference ? `<div class="row"><span class="label">Reference</span><span class="value">${esc(payment.externalReference)}</span></div>` : ''}
+  <div class="row"><span class="label">Status</span><span class="value">${esc(payment.reconciliationStatus)}</span></div>
+
+  <div class="total">
+    <div class="lbl">Amount paid</div>
+    <div class="amt">$${esc(amountFmt)}</div>
+  </div>
+
+  <div class="signoff">
+    <div>
+      <div class="muted">Issued by</div>
+      <div class="name">${esc(payment.issuedByName)}</div>
+    </div>
+    <div style="text-align:right">
+      <div class="muted">Receipt no.</div>
+      <div class="name">${esc(payment.receiptNumber)}</div>
+    </div>
+  </div>
+
+  ${payment.receiptDataUrl
+    ? `<div style="margin-top:18px"><div class="muted" style="margin-bottom:6px">Receipt photo</div><img src="${esc(payment.receiptDataUrl)}" alt="Receipt" style="max-width:100%;border-radius:6px;border:1px solid #e5e7eb"/></div>`
+    : ''}
+
+  <div class="actions">
+    <button onclick="window.print()">Print receipt</button>
+  </div>
+</div>
+</body>
+</html>`;
   }
 }

@@ -5,6 +5,7 @@ import { Roles } from '../../common/roles.decorator';
 import { RolesGuard } from '../../common/roles.guard';
 import { SystemConfigService } from './system-config.service';
 import { UpdateCompanyProfileDto } from './dto/update-company-profile.dto';
+import { UpdateSystemSettingsDto } from './dto/update-system-settings.dto';
 
 @ApiTags('system-config')
 @Controller('system-config')
@@ -43,6 +44,26 @@ export class SystemConfigController {
   @ApiResponse({ status: 200, description: 'Currencies' })
   currencies() {
     return this.svc.getSupportedCurrencies();
+  }
+
+  @Get('settings')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get operational system settings (penalties, approvals, etc.)' })
+  @ApiResponse({ status: 200, description: 'System settings' })
+  getSettings(@Req() req: any) {
+    return this.svc.getSystemSettings(req.user);
+  }
+
+  @Patch('settings')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update operational system settings (admin only)' })
+  @ApiResponse({ status: 200, description: 'Updated system settings' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  updateSettings(@Req() req: any, @Body() dto: UpdateSystemSettingsDto) {
+    return this.svc.updateSystemSettings(req.user, dto);
   }
 
   @Get('report-catalog')

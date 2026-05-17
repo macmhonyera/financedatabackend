@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { MoreThan, Repository } from 'typeorm';
 import { Client } from '../../entities/client.entity';
+import { ClientAsset } from '../../entities/client-asset.entity';
 import { Loan } from '../../entities/loan.entity';
 import { LoanInstallment } from '../../entities/loan-installment.entity';
 import { Payment } from '../../entities/payment.entity';
@@ -17,6 +18,7 @@ type AuthUser = { id: string; role: string; branch?: string | null };
 export class SyncService {
   constructor(
     @InjectRepository(Client) private readonly clientRepo: Repository<Client>,
+    @InjectRepository(ClientAsset) private readonly assetRepo: Repository<ClientAsset>,
     @InjectRepository(Loan) private readonly loanRepo: Repository<Loan>,
     @InjectRepository(LoanInstallment)
     private readonly installmentRepo: Repository<LoanInstallment>,
@@ -40,9 +42,10 @@ export class SyncService {
 
     const syncedAt = new Date();
 
-    const [clients, loans, installments, payments, paymentPromises, recoveryActions, fieldVisits] =
+    const [clients, clientAssets, loans, installments, payments, paymentPromises, recoveryActions, fieldVisits] =
       await Promise.all([
         this.fetchClients(branchId, sinceDate, cap),
+        this.fetchClientAssets(branchId, sinceDate, cap),
         this.fetchLoans(branchId, sinceDate, cap),
         this.fetchInstallments(branchId, sinceDate, cap),
         this.fetchPayments(branchId, sinceDate, cap),
@@ -53,6 +56,7 @@ export class SyncService {
 
     const hasMore =
       clients.length === cap ||
+      clientAssets.length === cap ||
       loans.length === cap ||
       installments.length === cap ||
       payments.length === cap ||
@@ -66,6 +70,7 @@ export class SyncService {
       hasMore,
       entities: {
         clients,
+        clientAssets,
         loans,
         installments,
         payments,
@@ -74,6 +79,16 @@ export class SyncService {
         fieldVisits,
       },
     };
+  }
+
+  private fetchClientAssets(branchId: string, since: Date | null, limit: number) {
+    const qb = this.assetRepo
+      .createQueryBuilder('asset')
+      .leftJoin('asset.client', 'client')
+      .leftJoin('client.branch', 'branch')
+      .where('branch.id = :branchId', { branchId });
+    if (since) qb.andWhere('asset.updatedAt > :since', { since });
+    return qb.orderBy('asset.updatedAt', 'ASC').take(limit).getMany();
   }
 
   private fetchFieldVisits(branchId: string, since: Date | null, limit: number) {
@@ -90,6 +105,8 @@ export class SyncService {
     const qb = this.clientRepo
       .createQueryBuilder('client')
       .leftJoin('client.branch', 'branch')
+      // documents is `select: false` on the entity so opt in explicitly
+      .addSelect('client.documents')
       .where('branch.id = :branchId', { branchId });
     if (since) qb.andWhere('client.updatedAt > :since', { since });
     return qb.orderBy('client.updatedAt', 'ASC').take(limit).getMany();

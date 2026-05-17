@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Body, Query, UseGuards, Req, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, UseGuards, Req, Param, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { PaymentsService } from './payments.service';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
@@ -41,9 +42,19 @@ export class PaymentsController {
         channel: body.channel,
         metadata: body.metadata,
         receiptImageKey: body.receiptImageKey,
+        receiptDataUrl: body.receiptDataUrl,
       } as any,
       req.user,
     );
+  }
+
+  @Get(':id/receipt')
+  @ApiOperation({ summary: 'Render a printable HTML receipt for a payment' })
+  @ApiResponse({ status: 200, description: 'HTML receipt' })
+  async receipt(@Req() req: any, @Param('id') id: string, @Res() res: Response) {
+    const html = await this.svc.renderReceipt(id, req.user);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
   }
 
   @UseGuards(RolesGuard)

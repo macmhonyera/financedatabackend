@@ -4,6 +4,7 @@ import { Logger, ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { validateEnv } from './common/env-validation';
+import { buildCorsOptions } from './common/cors';
 
 async function bootstrap() {
   validateEnv();
@@ -18,14 +19,7 @@ async function bootstrap() {
     }),
   );
 
-  const corsOrigins = (process.env.CORS_ORIGINS || '')
-    .split(',')
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0);
-  app.enableCors({
-    origin: corsOrigins.length > 0 ? corsOrigins : true,
-    credentials: true,
-  });
+  app.enableCors(buildCorsOptions());
   // request logging
   // morgan is used for simple HTTP request logging in dev
   try {

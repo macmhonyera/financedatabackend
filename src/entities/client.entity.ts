@@ -90,6 +90,14 @@ export class Client {
   @Column({ nullable: true })
   employmentType?: string;
 
+  /** Userid of the last person who edited the client (admin/manager/officer). */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  lastUpdatedByUserId?: string;
+
+  /** Display name of the last editor — surfaced on the client profile audit row. */
+  @Column({ type: 'varchar', length: 200, nullable: true })
+  lastUpdatedByName?: string;
+
   @ManyToOne(() => Branch, (b) => b.clients, { nullable: true })
   branch?: Branch;
 

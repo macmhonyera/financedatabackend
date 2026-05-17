@@ -69,7 +69,7 @@ export class ClientsController {
     } else if (req.user?.branch) {
       payload.branch = { id: req.user.branch };
     }
-    return this.svc.create(payload);
+    return this.svc.create(payload, req.user);
   }
 
   @UseGuards(RolesGuard)

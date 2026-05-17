@@ -1,6 +1,14 @@
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
-import { IsIn, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import {
+  IsIn,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class CreateClientAssetDto {
   @ApiProperty({ example: 'vehicle' })
@@ -33,4 +41,21 @@ export class CreateClientAssetDto {
   @IsOptional()
   @IsIn(['active', 'inactive', 'disposed'])
   status?: 'active' | 'inactive' | 'disposed';
+
+  @ApiProperty({
+    required: false,
+    description: 'Asset photo as a base64 data URL (image/jpeg or image/png).',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^data:image\/(jpe?g|png|webp);base64,/, {
+    message: 'photoDataUrl must be an image data URL',
+  })
+  photoDataUrl?: string;
+
+  @ApiProperty({ required: false, description: 'Idempotency key (UUID) for offline submits.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  idempotencyKey?: string;
 }

@@ -48,8 +48,34 @@ export class ClientAssetsService {
     return this.assetRepo.find({ where: { clientId, status: 'active' }, order: { createdAt: 'DESC' } });
   }
 
+  private validatePhotoSize(photoDataUrl: string | undefined): void {
+    if (!photoDataUrl) return;
+    // base64 ~ 4/3 of the binary; cap raw at ~3MB after decode
+    const base64Part = photoDataUrl.split(',')[1] || '';
+    const approxBytes = Math.floor(base64Part.length * 0.75);
+    if (approxBytes > 3 * 1024 * 1024) {
+      throw new BadRequestException('Asset photo is too large. Please use an image under 3MB.');
+    }
+  }
+
   async createForClient(clientId: string, dto: CreateClientAssetDto, user: any) {
     await this.getScopedClient(clientId, user);
+
+    // Idempotent replay: if an asset with the same idempotencyKey already exists for
+    // this client (set in description metadata), return it. We store the key in `notes`
+    // tail to avoid an extra column for now since the existing schema has no key column.
+    if (dto.idempotencyKey) {
+      const tag = `__key:${dto.idempotencyKey}`;
+      const existing = await this.assetRepo.findOne({
+        where: { clientId, notes: tag } as any,
+      });
+      if (existing) return existing;
+    }
+
+    this.validatePhotoSize(dto.photoDataUrl);
+
+    const officerName =
+      (user?.name as string | undefined) || (user?.email as string | undefined) || undefined;
 
     const entity = this.assetRepo.create({
       clientId,
@@ -59,7 +85,12 @@ export class ClientAssetsService {
       marketValue: dto.marketValue,
       valuationDate: this.normalizeDate(dto.valuationDate),
       status: dto.status || 'active',
-      notes: dto.notes,
+      notes: dto.idempotencyKey
+        ? `${dto.notes ? dto.notes + '\n' : ''}__key:${dto.idempotencyKey}`
+        : dto.notes,
+      photoDataUrl: dto.photoDataUrl,
+      photoCapturedBy: dto.photoDataUrl ? officerName : undefined,
+      photoCapturedAt: dto.photoDataUrl ? new Date() : undefined,
     } as Partial<ClientAsset>);
 
     return this.assetRepo.save(entity);
@@ -82,6 +113,15 @@ export class ClientAssetsService {
     if (dto.marketValue !== undefined) existing.marketValue = dto.marketValue;
     if (dto.status !== undefined) existing.status = dto.status;
     if (dto.notes !== undefined) existing.notes = dto.notes;
+
+    if (dto.photoDataUrl !== undefined) {
+      this.validatePhotoSize(dto.photoDataUrl);
+      const officerName =
+        (user?.name as string | undefined) || (user?.email as string | undefined) || undefined;
+      existing.photoDataUrl = dto.photoDataUrl || undefined;
+      existing.photoCapturedBy = dto.photoDataUrl ? officerName : undefined;
+      existing.photoCapturedAt = dto.photoDataUrl ? new Date() : undefined;
+    }
 
     return this.assetRepo.save(existing);
   }

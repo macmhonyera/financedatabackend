@@ -21,6 +21,12 @@ export class User {
   @Column({ type: 'varchar', default: 'collector' })
   role: UserRole;
 
+  @Column({ type: 'boolean', default: true })
+  active: boolean;
+
+  @Column({ nullable: true })
+  phone?: string;
+
   @ManyToOne(() => Branch, (b) => b.users, { nullable: true })
   branch?: Branch;
 

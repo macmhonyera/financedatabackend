@@ -18,6 +18,9 @@ export class Organization {
   @Column({ type: 'text', nullable: true })
   logoUrl?: string | null;
 
+  @Column({ type: 'jsonb', nullable: true })
+  settings?: Record<string, unknown> | null;
+
   @OneToMany(() => User, (user) => user.organization)
   users: User[];
 

@@ -1,4 +1,4 @@
-import { IsNumber, IsString, IsOptional, IsObject, Min } from 'class-validator';
+import { IsNumber, IsString, IsOptional, IsObject, Matches, Min } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
@@ -47,4 +47,15 @@ export class CreatePaymentDto {
   @IsOptional()
   @IsString()
   receiptImageKey?: string;
+
+  @ApiProperty({
+    required: false,
+    description: 'Receipt photo as a base64 data URL (e.g. handwritten or printed receipt photographed by the officer).',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^data:image\/(jpe?g|png|webp);base64,/, {
+    message: 'receiptDataUrl must be an image data URL',
+  })
+  receiptDataUrl?: string;
 }

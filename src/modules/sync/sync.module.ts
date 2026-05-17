@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Client } from '../../entities/client.entity';
+import { ClientAsset } from '../../entities/client-asset.entity';
 import { Loan } from '../../entities/loan.entity';
 import { LoanInstallment } from '../../entities/loan-installment.entity';
 import { Payment } from '../../entities/payment.entity';
@@ -14,6 +15,7 @@ import { SyncService } from './sync.service';
   imports: [
     TypeOrmModule.forFeature([
       Client,
+      ClientAsset,
       Loan,
       LoanInstallment,
       Payment,
