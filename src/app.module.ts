@@ -92,10 +92,12 @@ const useSsl = parseBoolean(process.env.DATABASE_SSL) ?? (hasSupabaseHost || has
         FieldVisit,
       ],
       synchronize: process.env.NODE_ENV !== 'production',
-      // Apply pending migrations on boot so production deploys self-heal.
-      // Existing migrations use IF NOT EXISTS / hasColumn guards so this is idempotent.
+      // Don't auto-run migrations on Vercel cold starts — the migration runner
+      // can exceed the function's 10s budget. Set RUN_MIGRATIONS_ON_BOOT=1 in
+      // env to opt-in (e.g. via a one-shot job), otherwise migrations are
+      // applied separately via `npm run typeorm migration:run`.
       migrations: [__dirname + '/migrations/*.{ts,js}'],
-      migrationsRun: process.env.NODE_ENV === 'production',
+      migrationsRun: process.env.RUN_MIGRATIONS_ON_BOOT === '1',
       logging: false,
     }),
     AuthModule,
